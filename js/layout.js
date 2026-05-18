@@ -211,11 +211,11 @@ export function bindAppLayout(root, navigate) {
       <a data-act="plan">${icon('star')} Abonnement</a>
       <div class="dropdown-sep"></div>
       <button data-act="logout">${icon('logout')} Se déconnecter</button>`,
-      (act) => {
+      async (act) => {
         if (act === 'account') navigate('#/app/account');
         else if (act === 'settings') navigate('#/app/account#parametres');
         else if (act === 'plan') navigate('#/app/account#abonnement');
-        else if (act === 'logout') { logout(); navigate('#/'); }
+        else if (act === 'logout') { await logout(); navigate('#/'); }
       });
   }
 }

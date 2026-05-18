@@ -5,9 +5,18 @@ import { icon } from '../icons.js';
 import { appLayout, bindAppLayout } from '../layout.js';
 import {
   currentUser, updateCompany, updateSettings, updateUser, setPlan,
-  PLANS, TVA_RATES, quotesThisMonth,
+  PLANS, TVA_RATES, quotesThisMonth, isCloudMode, getSubscription, init as storeInit,
 } from '../store.js';
-import { escapeHtml, toast, initials, num } from '../ui.js';
+import { invokeFunction } from '../supabase-client.js';
+import { escapeHtml, toast, initials, num, confirmDialog } from '../ui.js';
+
+const SUB_STATUS = {
+  active: { label: 'Actif', color: 'green' },
+  trialing: { label: "Période d'essai", color: 'blue' },
+  past_due: { label: 'Paiement en échec', color: 'red' },
+  canceled: { label: 'Résilié', color: 'gray' },
+  incomplete: { label: 'Paiement incomplet', color: 'amber' },
+};
 
 const TABS = [
   { key: 'profil', label: 'Profil entreprise', icon: 'building' },
@@ -19,6 +28,18 @@ const TABS = [
 export function renderAccount(ctx) {
   const u = currentUser();
   let tab = TABS.some(t => t.key === ctx.frag) ? ctx.frag : 'profil';
+  let billing = 'month';
+
+  // Retour de paiement Stripe Checkout
+  if (ctx.query && ctx.query.checkout) {
+    tab = 'abonnement';
+    if (ctx.query.checkout === 'success') {
+      toast('Paiement confirmé — votre abonnement est en cours d\'activation.');
+      setTimeout(async () => { try { await storeInit(); window.dispatchEvent(new Event('rerender')); } catch {} }, 2500);
+    } else {
+      toast('Paiement annulé — aucun changement effectué.', 'info');
+    }
+  }
 
   // ---------- Onglet : Profil entreprise ----------
   function profilTab() {
@@ -140,16 +161,32 @@ export function renderAccount(ctx) {
   function abonnementTab() {
     const cur = PLANS[u.plan];
     const used = quotesThisMonth(u);
+    const sub = getSubscription();
+    const cloud = isCloudMode();
+    const st = SUB_STATUS[sub.status] || SUB_STATUS.active;
+    const yearly = billing === 'year';
+    const priceOf = (p) => yearly ? p.priceYear : p.price;
+
     return `
     <div class="card card-pad">
       <div class="flex-between wrap-flex gap">
         <div>
-          <div class="eyebrow">Abonnement actuel</div>
+          <div class="flex items-center gap-sm">
+            <span class="eyebrow">Abonnement actuel</span>
+            ${cloud ? `<span class="badge ${st.color}">${st.label}</span>` : ''}
+          </div>
           <h3 style="font-size:1.5rem;margin-top:.6rem">Plan ${cur.name}</h3>
           <p class="dim" style="font-size:.88rem">${cur.desc}</p>
+          ${cloud && sub.current_period_end ? `
+            <p class="dim" style="font-size:.82rem;margin-top:.4rem">
+              ${sub.cancel_at_period_end
+                ? icon('warn') + ' Résiliation programmée le ' + new Date(sub.current_period_end).toLocaleDateString('fr-FR')
+                : 'Prochain renouvellement le ' + new Date(sub.current_period_end).toLocaleDateString('fr-FR')}
+            </p>` : ''}
         </div>
         <div style="text-align:right">
-          <div style="font-family:var(--font-display);font-size:2rem;font-weight:600">${cur.price === 0 ? 'Gratuit' : cur.price + ' € / mois'}</div>
+          <div style="font-family:var(--font-display);font-size:2rem;font-weight:600">
+            ${cur.price === 0 ? 'Gratuit' : (sub.billing_interval === 'year' ? cur.priceYear + ' € / an' : cur.price + ' € / mois')}</div>
         </div>
       </div>
       ${cur.quota !== Infinity ? `
@@ -158,29 +195,49 @@ export function renderAccount(ctx) {
           <span class="muted">Devis créés ce mois-ci</span><strong>${used} / ${cur.quota}</strong></div>
         <div class="progress"><div style="width:${Math.min(used / cur.quota * 100, 100)}%"></div></div>
       </div>` : `<p class="badge green no-dot" style="margin-top:1rem">Devis illimités</p>`}
+      ${sub.status === 'past_due' ? `
+        <div class="card-pad" style="margin-top:1rem;background:var(--danger-soft);border-radius:var(--radius-md)">
+          <strong style="color:var(--danger);font-size:.88rem">${icon('warn')} Échec de paiement</strong>
+          <p style="font-size:.84rem;margin-top:.3rem">Votre dernier règlement a échoué. Mettez à jour votre moyen de paiement pour conserver votre plan.</p>
+        </div>` : ''}
+      ${cloud && sub.stripe_customer_id ? `
+        <button class="btn btn-ghost" id="manage-sub" style="margin-top:1.1rem">
+          ${icon('wallet')} Gérer mon abonnement (factures, paiement, résiliation)</button>` : ''}
     </div>
 
-    <h3 style="font-size:1.15rem;margin:1.6rem 0 .9rem">Changer de plan</h3>
+    <div class="flex-between wrap-flex gap" style="margin:1.6rem 0 .9rem">
+      <h3 style="font-size:1.15rem">Changer de plan</h3>
+      <div class="seg" data-billing-seg>
+        <button data-bi="month" class="${!yearly ? 'on' : ''}">Mensuel</button>
+        <button data-bi="year" class="${yearly ? 'on' : ''}">Annuel <span style="color:var(--accent-strong)">−2 mois</span></button>
+      </div>
+    </div>
     <div class="price-grid">
       ${Object.values(PLANS).map(p => {
         const active = p.id === u.plan;
+        const free = p.price === 0;
         return `
-        <div class="card plan ${p.id === 'pro' ? 'featured' : ''}" style="padding:1.5rem">
+        <div class="card plan ${p.id === 'pro' ? 'featured' : ''} ${active ? '' : ''}" style="padding:1.5rem">
+          ${active ? '<span class="plan-tag" style="background:var(--ok)">Plan actuel</span>' : ''}
           <h3 style="font-size:1.2rem">${p.name}</h3>
-          <div class="price" style="font-size:2.2rem">${p.price === 0 ? 'Gratuit' : p.price + ' €'}<small>${p.price === 0 ? '' : '/mois'}</small></div>
+          <div class="price" style="font-size:2.2rem">
+            ${free ? 'Gratuit' : priceOf(p) + ' €'}<small>${free ? '' : (yearly ? '/an' : '/mois')}</small></div>
           <p class="plan-desc" style="min-height:auto">${p.desc}</p>
           <ul style="margin:1rem 0">
             <li>${icon('check')}<span>${p.quota === Infinity ? 'Devis illimités' : p.quota + ' devis / mois'}</span></li>
             <li>${icon('check')}<span>${p.seats === 1 ? '1 utilisateur' : "Jusqu'à " + p.seats + ' utilisateurs'}</span></li>
             <li>${icon('check')}<span>${p.id === 'starter' ? 'Export PDF' : 'Export PDF, Excel & Word'}</span></li>
           </ul>
-          <button class="btn ${active ? 'btn-ghost' : 'btn-primary'} btn-block" data-plan="${p.id}" ${active ? 'disabled' : ''}>
-            ${active ? 'Plan actuel' : 'Choisir ce plan'}</button>
+          <button class="btn ${active ? 'btn-ghost' : 'btn-primary'} btn-block"
+            data-plan="${p.id}" ${active ? 'disabled' : ''}>
+            ${active ? 'Plan actuel' : free ? 'Revenir au gratuit' : (cloud ? 'Souscrire ' + p.name : 'Choisir ce plan')}</button>
         </div>`;
       }).join('')}
     </div>
     <p class="dim" style="font-size:.82rem;margin-top:1.2rem">
-      Démonstration : le changement de plan est immédiat et gratuit, aucun paiement n'est traité.</p>`;
+      ${cloud
+        ? icon('shield') + ' Paiement sécurisé par Stripe. Le changement de plan payant ouvre une page de paiement Stripe ; la résiliation et les changements se gèrent depuis le portail Stripe.'
+        : 'Mode démonstration : le changement de plan est immédiat et gratuit. Connectez Stripe (voir SETUP.md) pour activer le paiement réel.'}</p>`;
   }
 
   // ---------- Onglet : Mon compte ----------
@@ -295,10 +352,65 @@ export function renderAccount(ctx) {
       paint();
     };
 
-    ctx.app.querySelectorAll('[data-plan]').forEach(b => b.onclick = () => {
-      setPlan(b.dataset.plan);
-      toast('Vous êtes désormais sur le plan ' + PLANS[b.dataset.plan].name + '.');
-      paint();
+    // Bascule mensuel / annuel
+    ctx.app.querySelectorAll('[data-billing-seg] button').forEach(b => b.onclick = () => {
+      billing = b.dataset.bi;
+      ctx.app.querySelector('[data-tab-content]').innerHTML = abonnementTab();
+      bind();
+    });
+
+    // Portail de gestion d'abonnement Stripe
+    const manage = ctx.app.querySelector('#manage-sub');
+    if (manage) manage.onclick = async () => {
+      manage.disabled = true;
+      manage.innerHTML = `<span class="spin" style="width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%"></span> Ouverture du portail…`;
+      try {
+        const { url } = await invokeFunction('stripe-portal', {});
+        window.location.href = url;
+      } catch (e) {
+        toast('Portail indisponible : ' + e.message, 'err');
+        manage.disabled = false;
+        manage.innerHTML = `${icon('wallet')} Gérer mon abonnement (factures, paiement, résiliation)`;
+      }
+    };
+
+    // Changement de plan
+    ctx.app.querySelectorAll('[data-plan]').forEach(b => b.onclick = async () => {
+      const planId = b.dataset.plan;
+
+      // Mode local : changement immédiat (démonstration)
+      if (!isCloudMode()) {
+        setPlan(planId);
+        toast('Vous êtes désormais sur le plan ' + PLANS[planId].name + '.');
+        paint();
+        return;
+      }
+
+      // Mode cloud, retour au gratuit : passe par le portail Stripe
+      if (planId === 'starter') {
+        if (!await confirmDialog({
+          title: 'Revenir au plan Starter',
+          message: "La résiliation s'effectue depuis le portail Stripe. Vous y serez redirigé.",
+          confirmLabel: 'Ouvrir le portail',
+        })) return;
+        try {
+          const { url } = await invokeFunction('stripe-portal', {});
+          window.location.href = url;
+        } catch (e) { toast('Portail indisponible : ' + e.message, 'err'); }
+        return;
+      }
+
+      // Mode cloud, plan payant : ouvre Stripe Checkout
+      b.disabled = true;
+      b.innerHTML = `<span class="spin" style="width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%"></span> Redirection vers Stripe…`;
+      try {
+        const { url } = await invokeFunction('stripe-checkout', { plan: planId, interval: billing });
+        window.location.href = url;
+      } catch (e) {
+        toast('Paiement indisponible : ' + e.message, 'err');
+        b.disabled = false;
+        b.innerHTML = 'Souscrire ' + PLANS[planId].name;
+      }
     });
   }
 

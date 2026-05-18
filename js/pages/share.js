@@ -1,17 +1,48 @@
 // ============================================================
 // Devisly — Page publique de visualisation client (lien partagé)
+// Fonctionne en mode local (mémoire) comme en mode cloud (RPC Supabase).
 // ============================================================
 import { icon } from '../icons.js';
 import { brand } from '../layout.js';
-import { findByShareToken, recordClientResponse, computeQuote } from '../store.js';
+import {
+  isCloudMode, findByShareToken, recordClientResponse,
+  rowToQuote, rowToCompany, rowToClient,
+} from '../store.js';
+import { fetchSharedQuote, submitQuoteResponse } from '../supabase-client.js';
 import { renderQuoteDoc } from '../doc.js';
 import { exportPDF } from '../exports.js';
-import { eur, escapeHtml, toast, modal, getTheme } from '../ui.js';
+import { eur, escapeHtml, toast, modal } from '../ui.js';
 
-export function renderShare(ctx) {
-  const found = findByShareToken(ctx.params.token);
+export async function renderShare(ctx) {
+  const token = ctx.params.token;
 
-  if (!found) {
+  ctx.app.innerHTML = `<div style="min-height:100dvh;display:grid;place-items:center">
+    <div class="spin" style="width:32px;height:32px;border:3px solid var(--line);
+      border-top-color:var(--accent);border-radius:50%"></div></div>`;
+
+  // ---------- Récupération du devis ----------
+  let quote, owner, client;
+  try {
+    if (isCloudMode()) {
+      const data = await fetchSharedQuote(token);
+      if (data && data.devis) {
+        quote = rowToQuote(data.devis);
+        owner = { company: rowToCompany(data.entreprise || {}) };
+        client = data.client ? rowToClient(data.client) : null;
+      }
+    } else {
+      const found = findByShareToken(token);
+      if (found) {
+        quote = found.quote;
+        owner = found.owner;
+        client = found.owner.clients.find(c => c.id === found.quote.clientId) || null;
+      }
+    }
+  } catch (e) {
+    console.error('Partage :', e);
+  }
+
+  if (!quote) {
     ctx.app.innerHTML = `
     <div style="min-height:100dvh;display:grid;place-items:center;padding:2rem">
       <div class="card card-pad center" style="max-width:420px">
@@ -24,11 +55,7 @@ export function renderShare(ctx) {
     return;
   }
 
-  const { quote, owner } = found;
-  const client = owner.clients.find(c => c.id === quote.clientId) || null;
-
   function paint() {
-    const c = computeQuote(quote);
     const responded = !!quote.clientResponse;
     ctx.app.innerHTML = `
     <div style="min-height:100dvh;background:var(--bg)">
@@ -50,14 +77,12 @@ export function renderShare(ctx) {
           <span style="color:var(--accent-strong)">${icon('signature')}</span>
           <div class="grow">
             <strong style="font-size:.95rem">Ce devis attend votre réponse</strong>
-            <div class="muted" style="font-size:.85rem">Montant total : <strong>${eur(c.ttc)} TTC</strong> · valable jusqu'au ${escapeHtml(quote.validUntil)}</div>
+            <div class="muted" style="font-size:.85rem">Valable jusqu'au ${escapeHtml(quote.validUntil || '—')}</div>
           </div>
         </div>
       </div>` : ''}
 
-      <div class="share-body">
-        ${renderQuoteDoc(quote, owner, client)}
-      </div>
+      <div class="share-body">${renderQuoteDoc(quote, owner, client)}</div>
 
       <footer style="text-align:center;padding:2rem;color:var(--ink-3);font-size:.82rem">
         Devis transmis via Devisly — logiciel de devis pour le BTP.
@@ -65,12 +90,10 @@ export function renderShare(ctx) {
     </div>`;
 
     ctx.app.querySelector('#dl-pdf').onclick = () => exportPDF(quote, owner, client);
-
-    const acceptBtn = ctx.app.querySelector('#accept');
-    const refuseBtn = ctx.app.querySelector('#refuse');
-
-    if (acceptBtn) acceptBtn.onclick = () => respondModal('accepted');
-    if (refuseBtn) refuseBtn.onclick = () => respondModal('refused');
+    const a = ctx.app.querySelector('#accept');
+    const r = ctx.app.querySelector('#refuse');
+    if (a) a.onclick = () => respondModal('accepted');
+    if (r) r.onclick = () => respondModal('refused');
   }
 
   function respondModal(status) {
@@ -99,16 +122,25 @@ export function renderShare(ctx) {
              <button class="btn ${accept ? 'btn-primary' : 'btn-danger'}" id="resp-confirm">
                ${accept ? 'Confirmer l\'acceptation' : 'Confirmer le refus'}</button>`,
       onMount(el, close) {
-        el.querySelector('#resp-confirm').onclick = () => {
+        el.querySelector('#resp-confirm').onclick = async () => {
           const name = el.querySelector('#resp-name').value.trim();
           if (!name) { toast('Veuillez indiquer votre nom.', 'err'); return; }
           if (accept && !el.querySelector('#resp-cgu').checked) {
             toast('Veuillez cocher la case d\'acceptation.', 'err'); return;
           }
-          recordClientResponse(ctx.params.token, status, name);
-          close();
-          toast(accept ? 'Devis accepté — merci !' : 'Réponse enregistrée.');
-          paint();
+          const btn = el.querySelector('#resp-confirm');
+          btn.disabled = true;
+          try {
+            if (isCloudMode()) await submitQuoteResponse(token, status, name);
+            else recordClientResponse(token, status, name);
+            quote.clientResponse = { status, at: Date.now(), name };
+            close();
+            toast(accept ? 'Devis accepté — merci !' : 'Réponse enregistrée.');
+            paint();
+          } catch (e) {
+            btn.disabled = false;
+            toast('Erreur : ' + e.message, 'err');
+          }
         };
       },
     });

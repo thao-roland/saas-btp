@@ -1,0 +1,13 @@
+# Configuration Supabase CLI — projet Devisly
+project_id = "devisly"
+
+[functions.stripe-checkout]
+verify_jwt = true
+
+[functions.stripe-portal]
+verify_jwt = true
+
+# Le webhook est appelé par Stripe (pas par un utilisateur) :
+# la vérification du JWT Supabase doit être désactivée.
+[functions.stripe-webhook]
+verify_jwt = false

@@ -3,7 +3,7 @@
 // ============================================================
 import { icon } from '../icons.js';
 import { brand } from '../layout.js';
-import { signup, login } from '../store.js';
+import { signup, login, isCloudMode } from '../store.js';
 import { toast, getTheme, toggleTheme } from '../ui.js';
 
 export function renderAuth(ctx) {
@@ -81,11 +81,15 @@ export function renderAuth(ctx) {
             <p class="field-err" id="auth-err" style="display:none"></p>
           </form>
 
+          ${isCloudMode() ? `
+          <p class="dim" style="font-size:.78rem;text-align:center;margin-top:1rem">
+            ${icon('shield')} Connexion sécurisée — données chiffrées et hébergées sur Supabase.</p>
+          ` : `
           <div class="auth-sep">ou</div>
           <button class="btn btn-ghost btn-block" id="demo-btn">
             ${icon('rocket')} Découvrir avec le compte de démonstration</button>
           <p class="dim" style="font-size:.78rem;text-align:center;margin-top:.7rem">
-            Compte démo : demo@devisly.fr — un dossier BTP complet déjà rempli.</p>
+            Compte démo : demo@devisly.fr — un dossier BTP complet déjà rempli.</p>`}
         </div>
       </main>
     </div>`;
@@ -97,29 +101,37 @@ export function renderAuth(ctx) {
 
     const form = ctx.app.querySelector('#auth-form');
     const err = ctx.app.querySelector('#auth-err');
-    form.onsubmit = (e) => {
+    const submitBtn = form.querySelector('button[type=submit]');
+    const submitLabel = submitBtn.innerHTML;
+
+    form.onsubmit = async (e) => {
       e.preventDefault();
       err.style.display = 'none';
       const fd = Object.fromEntries(new FormData(form));
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span class="spin" style="width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%"></span> Veuillez patienter…`;
       try {
         if (mode === 'login') {
-          login(fd.email, fd.password);
+          await login(fd.email, fd.password);
           toast('Connexion réussie. Bon chantier !');
         } else {
           if ((fd.password || '').length < 6) throw new Error('Le mot de passe doit comporter au moins 6 caractères.');
-          signup(fd);
+          await signup(fd);
           toast('Compte créé — bienvenue sur Devisly !');
         }
         ctx.navigate('#/app');
       } catch (ex) {
         err.textContent = ex.message;
         err.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = submitLabel;
       }
     };
 
-    ctx.app.querySelector('#demo-btn').onclick = () => {
+    const demoBtn = ctx.app.querySelector('#demo-btn');
+    if (demoBtn) demoBtn.onclick = async () => {
       try {
-        login('demo@devisly.fr', 'demo1234');
+        await login('demo@devisly.fr', 'demo1234');
         toast('Vous explorez le compte de démonstration.');
         ctx.navigate('#/app');
       } catch (ex) { toast(ex.message, 'err'); }

@@ -262,24 +262,14 @@ export function renderPricing(ctx) {
           <p>De l'artisan indépendant à la PME du bâtiment. Sans engagement, résiliable à tout moment.</p>
         </div>
 
-        <div class="price-grid">
-          ${Object.values(PLANS).map(p => {
-            const featured = p.id === 'pro';
-            return `
-            <div class="card plan ${featured ? 'featured' : ''} reveal">
-              ${featured ? `<span class="plan-tag">Le plus choisi</span>` : ''}
-              <h3>${p.name}</h3>
-              <p class="plan-desc">${p.desc}</p>
-              <div class="price">${p.price === 0 ? 'Gratuit' : p.price + ' €'}<small>${p.price === 0 ? '' : ' / mois HT'}</small></div>
-              <ul>
-                ${PLAN_FEATURES[p.id].map(f => `<li>${icon('check')}<span>${f}</span></li>`).join('')}
-              </ul>
-              <a href="#/signup" class="btn ${featured ? 'btn-primary' : 'btn-ghost'} btn-block btn-lg">
-                ${p.price === 0 ? 'Commencer gratuitement' : 'Choisir ' + p.name}
-              </a>
-            </div>`;
-          }).join('')}
+        <div class="reveal" style="display:flex;justify-content:center;margin-bottom:2rem">
+          <div class="seg" data-pricing-seg>
+            <button data-bi="month" class="on">Mensuel</button>
+            <button data-bi="year">Annuel <span style="color:var(--accent-strong)">2 mois offerts</span></button>
+          </div>
         </div>
+
+        <div class="price-grid" data-price-grid></div>
 
         <div class="card card-pad reveal" style="margin-top:2.5rem;overflow-x:auto">
           <h3 style="font-size:1.4rem">Comparatif détaillé des plans</h3>
@@ -293,12 +283,36 @@ export function renderPricing(ctx) {
         </div>
 
         <p class="dim center" style="margin-top:1.5rem;font-size:.85rem">
-          Les prix sont indicatifs et hors taxes. Cette application est une démonstration ;
-          aucun paiement réel n'est traité.</p>
+          Prix hors taxes. Le paiement est traité de façon sécurisée par Stripe ;
+          changement ou résiliation possible à tout moment.</p>
       </div>
     </section>
   </main>
   ${marketingFooter()}`;
 
   bindMarketingNav(ctx.app);
+
+  const grid = ctx.app.querySelector('[data-price-grid]');
+  function drawPlans(interval) {
+    grid.innerHTML = Object.values(PLANS).map(p => {
+      const featured = p.id === 'pro';
+      const free = p.price === 0;
+      const amount = interval === 'year' ? p.priceYear : p.price;
+      return `
+      <div class="card plan ${featured ? 'featured' : ''}">
+        ${featured ? `<span class="plan-tag">Le plus choisi</span>` : ''}
+        <h3>${p.name}</h3>
+        <p class="plan-desc">${p.desc}</p>
+        <div class="price">${free ? 'Gratuit' : amount + ' €'}<small>${free ? '' : (interval === 'year' ? ' / an HT' : ' / mois HT')}</small></div>
+        <ul>${PLAN_FEATURES[p.id].map(f => `<li>${icon('check')}<span>${f}</span></li>`).join('')}</ul>
+        <a href="#/signup" class="btn ${featured ? 'btn-primary' : 'btn-ghost'} btn-block btn-lg">
+          ${free ? 'Commencer gratuitement' : 'Choisir ' + p.name}</a>
+      </div>`;
+    }).join('');
+  }
+  drawPlans('month');
+  ctx.app.querySelectorAll('[data-pricing-seg] button').forEach(b => b.onclick = () => {
+    ctx.app.querySelectorAll('[data-pricing-seg] button').forEach(x => x.classList.toggle('on', x === b));
+    drawPlans(b.dataset.bi);
+  });
 }
