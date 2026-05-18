@@ -13,10 +13,14 @@ import { escapeHtml, toast, initials, num, confirmDialog } from '../ui.js';
 // Traduit une erreur d'appel aux Edge Functions Stripe en message clair
 function stripeErr(e) {
   const m = (e && e.message) || '';
-  if (/non-2xx|not found|404|Failed to send|FunctionsFetchError/i.test(m)) {
-    return "Le paiement Stripe n'est pas encore activé. Les fonctions Stripe doivent être déployées sur Supabase et leurs clés renseignées — voir le guide SETUP.md (étapes 3 à 5).";
+  if (/Failed to send|FunctionsFetchError|Failed to fetch|not found|404/i.test(m)) {
+    return "Fonctions Stripe introuvables. Vérifie qu'elles sont déployées et nommées exactement « stripe-checkout » et « stripe-portal » (SETUP.md, étape 4).";
   }
-  return m || 'Service de paiement momentanément indisponible.';
+  if (/non-2xx/i.test(m)) {
+    return "La fonction Stripe a renvoyé une erreur. Ouvre Supabase → Edge Functions → onglet Logs pour voir le détail (souvent un secret manquant ou un Price ID incorrect).";
+  }
+  // Message réel renvoyé par la fonction (ex. « Plan ou périodicité inconnu »)
+  return 'Stripe : ' + (m || 'service momentanément indisponible.');
 }
 
 const SUB_STATUS = {

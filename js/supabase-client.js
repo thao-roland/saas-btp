@@ -107,7 +107,17 @@ export async function updateProfile(id, patch) {
 export async function invokeFunction(name, body) {
   const sb = await getClient();
   const { data, error } = await sb.functions.invoke(name, { body });
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Récupère le vrai message d'erreur renvoyé par la fonction
+    let detail = error.message || 'Erreur de la fonction';
+    try {
+      if (error.context && typeof error.context.json === 'function') {
+        const b = await error.context.json();
+        if (b && b.error) detail = b.error;
+      }
+    } catch { /* corps non lisible */ }
+    throw new Error(detail);
+  }
   if (data && data.error) throw new Error(data.error);
   return data;
 }
