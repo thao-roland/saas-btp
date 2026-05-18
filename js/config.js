@@ -13,8 +13,8 @@
 // ============================================================
 
 export const CONFIG = {
-  SUPABASE_URL: 'https://VOTRE-REF-PROJET.supabase.co',
-  SUPABASE_ANON_KEY: 'VOTRE_CLE_ANON_PUBLIC',
+  SUPABASE_URL: 'https://zkyffkbbmbvqkkeyvzkv.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_I-rhzmLacFXhazledaDL1A_l3CPOZsL',
 };
 
 // Le mode cloud est actif dès que les clés ont été remplacées.
