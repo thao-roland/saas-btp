@@ -29,7 +29,14 @@ const PRICES: Record<string, string | undefined> = {
   "entreprise:year": Deno.env.get("STRIPE_PRICE_ENTREPRISE_YEARLY"),
 };
 
-const APP_URL = Deno.env.get("APP_URL") ?? "http://localhost:4173/index.html";
+// Adresse de l'application — normalisée pour toujours avoir un scheme http(s)
+function appUrl(): string {
+  let u = (Deno.env.get("APP_URL") ?? "").trim();
+  if (!u) return "http://localhost:4173/index.html";
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u;   // ajoute https:// si oublié
+  return u;
+}
+const APP_URL = appUrl();
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });

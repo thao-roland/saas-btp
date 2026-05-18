@@ -21,7 +21,13 @@ const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, {
   httpClient: Stripe.createFetchHttpClient(),
 });
 
-const APP_URL = Deno.env.get("APP_URL") ?? "http://localhost:4173/index.html";
+function appUrl(): string {
+  let u = (Deno.env.get("APP_URL") ?? "").trim();
+  if (!u) return "http://localhost:4173/index.html";
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+  return u;
+}
+const APP_URL = appUrl();
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
