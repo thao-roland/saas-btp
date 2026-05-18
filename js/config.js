@@ -13,7 +13,7 @@
 // ============================================================
 
 export const CONFIG = {
-  SUPABASE_URL: 'https://zkyffkbbmbvqkkeyvzkv.supabase.co/rest/v1/',
+  SUPABASE_URL: 'https://zkyffkbbmbvqkkeyvzkv.supabase.co',
   SUPABASE_ANON_KEY: 'sb_publishable_I-rhzmLacFXhazledaDL1A_l3CPOZsL',
 };
 
