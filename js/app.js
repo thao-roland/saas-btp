@@ -57,6 +57,9 @@ function router() {
   if (!matched.public && !user) { location.hash = '#/login'; return; }
   if (matched.public && user && /^\/(login|signup)\/?$/.test(path)) { location.hash = '#/app'; return; }
 
+  // Sauvegarde les modifications en attente avant de changer de page
+  store.flushWrites();
+
   const ctx = { params, query, frag: frag || '', navigate, app };
   window.scrollTo(0, 0);
   document.getElementById('modal-host').innerHTML = '';
@@ -68,8 +71,39 @@ function router() {
 
 window.addEventListener('hashchange', router);
 window.addEventListener('rerender', router);
-window.addEventListener('cloud-sync-error', () =>
-  toast('Synchronisation cloud interrompue — vérifiez votre connexion.', 'err'));
+
+// Sauve les écritures en attente quand l'utilisateur quitte/masque l'onglet
+window.addEventListener('pagehide', () => store.flushWrites());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') store.flushWrites();
+});
+
+// Indicateur de synchronisation cloud (discret, en bas à gauche)
+if (store.isCloudMode()) {
+  const ind = document.createElement('div');
+  ind.id = 'sync-indicator';
+  document.body.appendChild(ind);
+  let errorShown = false;
+  window.addEventListener('cloud-sync', (e) => {
+    const { state, message } = e.detail;
+    if (state === 'pending' || state === 'syncing') {
+      ind.className = 'show';
+      ind.innerHTML = `<span class="sdot"></span> Sauvegarde…`;
+    } else if (state === 'saved') {
+      ind.className = 'show ok';
+      ind.innerHTML = `✓ Enregistré dans le cloud`;
+      errorShown = false;
+      setTimeout(() => { ind.className = ind.className.replace('show', '').trim(); }, 2200);
+    } else if (state === 'error') {
+      ind.className = 'show err';
+      ind.innerHTML = `⚠ Modifications non sauvegardées`;
+      if (!errorShown) {
+        errorShown = true;
+        toast('Sauvegarde cloud impossible : ' + (message || 'vérifiez la configuration Supabase (tables créées ?)'), 'err');
+      }
+    }
+  });
+}
 
 // ---------- Démarrage ----------
 (async function boot() {

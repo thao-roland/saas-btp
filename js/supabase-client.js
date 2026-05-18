@@ -10,7 +10,7 @@ let _client = null;
 // Initialisation paresseuse : le SDK n'est chargé qu'en mode cloud.
 export async function getClient() {
   if (_client) return _client;
-  const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2.45.4');
+  const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
   _client = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
     auth: { persistSession: true, autoRefreshToken: true },
   });

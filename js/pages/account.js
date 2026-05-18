@@ -10,6 +10,15 @@ import {
 import { invokeFunction } from '../supabase-client.js';
 import { escapeHtml, toast, initials, num, confirmDialog } from '../ui.js';
 
+// Traduit une erreur d'appel aux Edge Functions Stripe en message clair
+function stripeErr(e) {
+  const m = (e && e.message) || '';
+  if (/non-2xx|not found|404|Failed to send|FunctionsFetchError/i.test(m)) {
+    return "Le paiement Stripe n'est pas encore activé. Les fonctions Stripe doivent être déployées sur Supabase et leurs clés renseignées — voir le guide SETUP.md (étapes 3 à 5).";
+  }
+  return m || 'Service de paiement momentanément indisponible.';
+}
+
 const SUB_STATUS = {
   active: { label: 'Actif', color: 'green' },
   trialing: { label: "Période d'essai", color: 'blue' },
@@ -368,7 +377,7 @@ export function renderAccount(ctx) {
         const { url } = await invokeFunction('stripe-portal', {});
         window.location.href = url;
       } catch (e) {
-        toast('Portail indisponible : ' + e.message, 'err');
+        toast(stripeErr(e), 'err');
         manage.disabled = false;
         manage.innerHTML = `${icon('wallet')} Gérer mon abonnement (factures, paiement, résiliation)`;
       }
@@ -396,7 +405,7 @@ export function renderAccount(ctx) {
         try {
           const { url } = await invokeFunction('stripe-portal', {});
           window.location.href = url;
-        } catch (e) { toast('Portail indisponible : ' + e.message, 'err'); }
+        } catch (e) { toast(stripeErr(e), 'err'); }
         return;
       }
 
@@ -407,7 +416,7 @@ export function renderAccount(ctx) {
         const { url } = await invokeFunction('stripe-checkout', { plan: planId, interval: billing });
         window.location.href = url;
       } catch (e) {
-        toast('Paiement indisponible : ' + e.message, 'err');
+        toast(stripeErr(e), 'err');
         b.disabled = false;
         b.innerHTML = 'Souscrire ' + PLANS[planId].name;
       }

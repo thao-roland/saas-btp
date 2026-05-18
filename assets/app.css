@@ -800,6 +800,25 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; letter-spac
   @page { margin: 1.4cm; }
 }
 
+/* Indicateur de synchronisation cloud */
+#sync-indicator {
+  position: fixed; left: 1.1rem; bottom: 1.1rem; z-index: 70;
+  display: flex; align-items: center; gap: .45rem;
+  padding: .5rem .85rem; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lift); font-size: .8rem; font-weight: 600;
+  color: var(--ink-2); opacity: 0; transform: translateY(8px);
+  pointer-events: none; transition: opacity .4s var(--ease), transform .4s var(--ease);
+}
+#sync-indicator.show { opacity: 1; transform: translateY(0); }
+#sync-indicator.ok { color: var(--ok); }
+#sync-indicator.err { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+#sync-indicator .sdot {
+  width: 9px; height: 9px; border-radius: 99px; background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skeleton { background: linear-gradient(90deg, var(--surface-2), var(--line), var(--surface-2)); background-size: 200% 100%; animation: sk 1.4s infinite; border-radius: var(--radius-sm); }

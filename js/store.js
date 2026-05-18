@@ -280,17 +280,63 @@ function buildCloudUser(ws) {
   };
 }
 
-// ---------- File de synchronisation cloud (écritures ordonnées) ----------
-let syncChain = Promise.resolve();
-function enqueue(label, fn) {
+// ---------- Synchronisation cloud différée (anti-rafale) ----------
+// Les écritures ne partent PAS à chaque frappe : elles sont regroupées
+// et envoyées ~1 s après la dernière modification. Une seule requête
+// remplace des dizaines d'appels réseau.
+const pendingWrites = new Map();   // clé -> { priority, label, run }
+let entreprisePatch = null;
+let flushTimer = null;
+let flushing = false;
+let lastSyncError = '';
+
+function syncState(state) {
+  window.dispatchEvent(new CustomEvent('cloud-sync', { detail: { state, message: lastSyncError } }));
+}
+function scheduleFlush() {
   if (!CLOUD) return;
-  syncChain = syncChain.then(fn).catch(err => {
-    console.error('Sync cloud (' + label + ') :', err);
-    window.dispatchEvent(new CustomEvent('cloud-sync-error', { detail: label }));
-  });
+  syncState('pending');
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => { flushWrites(); }, 1100);
+}
+function scheduleWrite(key, priority, label, run) {
+  if (!CLOUD) return;
+  pendingWrites.set(key, { priority, label, run });
+  scheduleFlush();
 }
 function pushEntreprise(patch) {
-  enqueue('entreprise', () => cloud.updateEntreprise(cloudEntrepriseId, patch));
+  if (!CLOUD) return;
+  entreprisePatch = { ...(entreprisePatch || {}), ...patch };
+  pendingWrites.set('entreprise', {
+    priority: 0, label: 'entreprise',
+    run: async () => { const p = entreprisePatch; entreprisePatch = null; await cloud.updateEntreprise(cloudEntrepriseId, p); },
+  });
+  scheduleFlush();
+}
+
+// Envoie toutes les écritures en attente. Appelée par le minuteur,
+// avant chaque changement de page et avant la déconnexion.
+export async function flushWrites() {
+  clearTimeout(flushTimer);
+  if (flushing || !pendingWrites.size) return;
+  flushing = true;
+  syncState('syncing');
+  let failed = false;
+  const items = [...pendingWrites.entries()].sort((a, b) => a[1].priority - b[1].priority);
+  for (const [key, item] of items) {
+    pendingWrites.delete(key);
+    try {
+      await item.run();
+    } catch (e) {
+      failed = true;
+      lastSyncError = (e && e.message) ? e.message : String(e);
+      console.error('Sync cloud (' + item.label + ') :', lastSyncError);
+    }
+  }
+  flushing = false;
+  if (!failed) lastSyncError = '';
+  syncState(failed ? 'error' : 'saved');
+  if (pendingWrites.size) scheduleFlush();
 }
 
 // ============================================================
@@ -355,7 +401,7 @@ export async function login(email, password) {
 }
 
 export async function logout() {
-  if (CLOUD) { try { await cloud.cloudSignOut(); } catch {} }
+  if (CLOUD) { try { await flushWrites(); await cloud.cloudSignOut(); } catch {} }
   db = { users: [], session: null, seeded: true };
   cloudEntrepriseId = null;
   if (!CLOUD) localPersist();
@@ -381,7 +427,7 @@ export function updateUser(patch) {
     const prof = {};
     if ('fullName' in patch) prof.full_name = patch.fullName;
     if ('role' in patch) prof.role = patch.role;
-    if (Object.keys(prof).length) enqueue('profil', () => cloud.updateProfile(u.id, prof));
+    if (Object.keys(prof).length) scheduleWrite('profil', 0, 'profil', () => cloud.updateProfile(u.id, prof));
     // NB : le mot de passe et l'e-mail de connexion se gèrent via Supabase Auth.
   }
   return u;
@@ -463,7 +509,7 @@ export function saveQuote(q) {
   }
   localPersist();
   if (CLOUD) {
-    enqueue('devis', () => cloud.dbUpsert('devis', quoteToRow(q)));
+    scheduleWrite('devis:' + q.id, 2, 'devis', () => cloud.dbUpsert('devis', quoteToRow(q)));
     if (seqConsumed) pushEntreprise({ settings: u.settings });
   }
   return q;
@@ -472,7 +518,7 @@ export function deleteQuote(id) {
   const u = currentUser();
   u.quotes = u.quotes.filter(q => q.id !== id);
   localPersist();
-  if (CLOUD) enqueue('devis', () => cloud.dbDelete('devis', id));
+  if (CLOUD) scheduleWrite('devis:' + id, 2, 'devis', () => cloud.dbDelete('devis', id));
 }
 export function duplicateQuote(id) {
   const u = currentUser();
@@ -488,7 +534,7 @@ export function duplicateQuote(id) {
   u.settings.nextSeq++;
   localPersist();
   if (CLOUD) {
-    enqueue('devis', () => cloud.dbUpsert('devis', quoteToRow(copy)));
+    scheduleWrite('devis:' + copy.id, 2, 'devis', () => cloud.dbUpsert('devis', quoteToRow(copy)));
     pushEntreprise({ settings: u.settings });
   }
   return copy;
@@ -534,7 +580,7 @@ export function convertToInvoice(quoteId) {
   localPersist();
   if (CLOUD) {
     pushEntreprise({ factures: u.invoices, settings: u.settings });
-    enqueue('devis', () => cloud.dbUpsert('devis', quoteToRow(q)));
+    scheduleWrite('devis:' + q.id, 2, 'devis', () => cloud.dbUpsert('devis', quoteToRow(q)));
   }
   return inv;
 }
@@ -554,14 +600,14 @@ export function saveClient(c) {
     u.clients.unshift(c);
   }
   localPersist();
-  if (CLOUD) enqueue('clients', () => cloud.dbUpsert('clients', clientToRow(c)));
+  if (CLOUD) scheduleWrite('clients:' + c.id, 1, 'clients', () => cloud.dbUpsert('clients', clientToRow(c)));
   return c;
 }
 export function deleteClient(id) {
   const u = currentUser();
   u.clients = u.clients.filter(c => c.id !== id);
   localPersist();
-  if (CLOUD) enqueue('clients', () => cloud.dbDelete('clients', id));
+  if (CLOUD) scheduleWrite('clients:' + id, 1, 'clients', () => cloud.dbDelete('clients', id));
 }
 export function getClient(id) { return currentUser()?.clients.find(c => c.id === id); }
 
@@ -576,14 +622,14 @@ export function saveLibraryItem(p) {
     if (i >= 0) u.library[i] = p;
   }
   localPersist();
-  if (CLOUD) enqueue('prestations', () => cloud.dbUpsert('prestations', prestaToRow(p)));
+  if (CLOUD) scheduleWrite('prestations:' + p.id, 1, 'prestations', () => cloud.dbUpsert('prestations', prestaToRow(p)));
   return p;
 }
 export function deleteLibraryItem(id) {
   const u = currentUser();
   u.library = u.library.filter(p => p.id !== id);
   localPersist();
-  if (CLOUD) enqueue('prestations', () => cloud.dbDelete('prestations', id));
+  if (CLOUD) scheduleWrite('prestations:' + id, 1, 'prestations', () => cloud.dbDelete('prestations', id));
 }
 
 // ============================================================

@@ -368,9 +368,17 @@ export function renderEditor(ctx) {
     ctx.app.querySelectorAll('[data-add-section]').forEach(b => b.onclick = () => {
       if (b.disabled) return;
       const type = b.dataset.addSection;
-      q.sections.push({ id: uid('sec'), type, label: SECTION_TYPES[type].label, lines: [] });
-      build();
+      const s = { id: uid('sec'), type, label: SECTION_TYPES[type].label, lines: [] };
+      q.sections.push(s);
+      // Ajout fluide : on insère la nouvelle section sans reconstruire la page
+      const host = ctx.app.querySelector('[data-sections]');
+      host.insertAdjacentHTML('beforeend', sectionCard(s));
+      bindSection(ctx.app.querySelector(`[data-section="${s.id}"]`));
+      b.disabled = true;
+      refreshTotals();
       autosave();
+      ctx.app.querySelector(`[data-section="${s.id}"]`)
+        .scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
 
     ctx.app.querySelector('[data-new-client]').onclick = () => openNewClient();
