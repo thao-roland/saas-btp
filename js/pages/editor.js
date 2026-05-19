@@ -113,29 +113,43 @@ export function renderEditor(ctx) {
       ${c.tvaLines.map(t => `
         <div class="totals-row"><span class="tr-lbl">TVA ${num(t.rate, 1)} % <span class="dim">· base ${eur(t.base)}</span></span><span>${eur(t.amount)}</span></div>`).join('')}
       <div class="totals-row grand"><span class="tr-lbl">Total TTC</span><span>${eur(c.ttc)}</span></div>
+      <p class="dim" style="font-size:.72rem;margin-top:.7rem;line-height:1.5">
+        <strong>HT</strong> = prix hors taxes &nbsp;·&nbsp; <strong>TVA</strong> = taxe ajoutée
+        &nbsp;·&nbsp; <strong>TTC</strong> = montant final payé par le client.</p>
       ${payTotal !== 100 && q.payments?.length ? `
-        <p class="field-err" style="margin-top:.6rem">${icon('warn')} Les tranches de paiement totalisent ${num(payTotal, 1)} % (attendu : 100 %).</p>` : ''}
+        <p class="field-err" style="margin-top:.5rem">${icon('warn')} Les versements totalisent ${num(payTotal, 1)} % au lieu de 100 %.</p>` : ''}
     </div>`;
   }
 
   function paymentsCard() {
+    const ttc = computeQuote(q).ttc;
+    const payTotal = (q.payments || []).reduce((a, p) => a + (Number(p.percent) || 0), 0);
     return `
     <div class="card card-pad reveal" data-pay-card>
       <div class="flex items-center gap-sm" style="margin-bottom:.4rem">
         <span class="qs-ic">${icon('wallet')}</span>
-        <h3 style="font-size:1rem;font-family:var(--font-ui);font-weight:700">Tranches de paiement</h3>
+        <h3 style="font-size:1rem;font-family:var(--font-ui);font-weight:700">Comment le client paie</h3>
       </div>
-      <p class="dim" style="font-size:.82rem;margin-bottom:.8rem">Acompte, situations de travaux et solde — la répartition doit totaliser 100 %.</p>
+      <p class="dim" style="font-size:.82rem;margin-bottom:.8rem">
+        Découpez le règlement en plusieurs versements : un acompte à la signature, des
+        paiements en cours de chantier, puis le solde à la fin. Indiquez la part de
+        chaque versement en % — le montant en euros s'affiche automatiquement.</p>
       <div class="mini-list" data-pay-list>
         ${(q.payments || []).map((p, i) => `
           <div class="mini-row" data-pay="${i}">
-            <input class="input input-sm mr-grow" data-p="label" value="${escapeHtml(p.label)}" placeholder="Libellé de la tranche">
-            <input class="input input-sm" data-p="percent" type="number" min="0" max="100" step="1" value="${p.percent}" style="width:74px;text-align:right">
+            <input class="input input-sm mr-grow" data-p="label" value="${escapeHtml(p.label)}" placeholder="Ex. Acompte à la signature">
+            <input class="input input-sm" data-p="percent" type="number" min="0" max="100" step="1" value="${p.percent}" style="width:62px;text-align:right">
             <span class="dim">%</span>
+            <span data-pay-amount style="font-weight:700;font-size:.84rem;min-width:92px;text-align:right;white-space:nowrap">
+              ${eur(ttc * (Number(p.percent) || 0) / 100)}</span>
             <button class="line-del" data-del-pay>${icon('trash')}</button>
           </div>`).join('')}
       </div>
-      <button class="btn btn-ghost btn-sm" data-add-pay style="margin-top:.7rem">${icon('plus')} Ajouter une tranche</button>
+      <div class="flex-between" style="margin-top:.7rem">
+        <button class="btn btn-ghost btn-sm" data-add-pay>${icon('plus')} Ajouter un versement</button>
+        <span class="badge ${payTotal === 100 ? 'green' : 'amber'} no-dot" data-pay-total>
+          Total des parts : ${num(payTotal, 1)} %</span>
+      </div>
     </div>`;
   }
 
@@ -249,6 +263,10 @@ export function renderEditor(ctx) {
     });
     bindAppLayout(ctx.app, ctx.navigate);
     bind();
+    // Les cartes portent la classe `reveal` (animation d'entrée). Elle n'est
+    // déclenchée qu'au 1er rendu par le routeur ; sur les re-rendus partiels
+    // on la retire pour que les sections restent visibles immédiatement.
+    ctx.app.querySelectorAll('.reveal').forEach(e => e.classList.remove('reveal'));
   }
 
   // ---------- Mises à jour ciblées ----------
@@ -260,12 +278,21 @@ export function renderEditor(ctx) {
   function refreshSection(secId) {
     const s = q.sections.find(x => x.id === secId);
     const el = ctx.app.querySelector(`[data-section="${secId}"]`);
-    if (s && el) { el.outerHTML = sectionCard(s); bindSection(ctx.app.querySelector(`[data-section="${secId}"]`)); }
+    if (s && el) {
+      el.outerHTML = sectionCard(s);
+      const fresh = ctx.app.querySelector(`[data-section="${secId}"]`);
+      fresh.classList.remove('reveal');
+      bindSection(fresh);
+    }
     refreshTotals();
   }
   function refreshPayments() {
     const el = ctx.app.querySelector('[data-pay-card]');
-    if (el) { el.outerHTML = paymentsCard(); bindPayments(); }
+    if (el) {
+      el.outerHTML = paymentsCard();
+      ctx.app.querySelector('[data-pay-card]').classList.remove('reveal');
+      bindPayments();
+    }
     refreshTotals();
   }
 
@@ -335,7 +362,7 @@ export function renderEditor(ctx) {
     const card = ctx.app.querySelector('[data-pay-card]');
     card.querySelector('[data-add-pay]').onclick = () => {
       q.payments = q.payments || [];
-      q.payments.push({ label: 'Nouvelle tranche', percent: 0 });
+      q.payments.push({ label: 'Nouveau versement', percent: 0 });
       refreshPayments(); autosave();
     };
     card.querySelectorAll('[data-pay]').forEach(row => {
@@ -343,6 +370,18 @@ export function renderEditor(ctx) {
       row.querySelectorAll('[data-p]').forEach(inp => {
         inp.addEventListener('input', () => {
           q.payments[i][inp.dataset.p] = inp.type === 'number' ? Number(inp.value) : inp.value;
+          // Met à jour en direct le montant € de la tranche et le total des parts
+          if (inp.dataset.p === 'percent') {
+            const c = computeQuote(q);
+            const amt = row.querySelector('[data-pay-amount]');
+            if (amt) amt.textContent = eur(c.ttc * (Number(inp.value) || 0) / 100);
+            const total = q.payments.reduce((a, p) => a + (Number(p.percent) || 0), 0);
+            const badge = card.querySelector('[data-pay-total]');
+            if (badge) {
+              badge.textContent = 'Total des parts : ' + num(total, 1) + ' %';
+              badge.className = 'badge ' + (total === 100 ? 'green' : 'amber') + ' no-dot';
+            }
+          }
           refreshTotals(); autosave();
         });
       });
@@ -373,12 +412,13 @@ export function renderEditor(ctx) {
       // Ajout fluide : on insère la nouvelle section sans reconstruire la page
       const host = ctx.app.querySelector('[data-sections]');
       host.insertAdjacentHTML('beforeend', sectionCard(s));
-      bindSection(ctx.app.querySelector(`[data-section="${s.id}"]`));
+      const newSec = ctx.app.querySelector(`[data-section="${s.id}"]`);
+      newSec.classList.remove('reveal');   // visible immédiatement
+      bindSection(newSec);
       b.disabled = true;
       refreshTotals();
       autosave();
-      ctx.app.querySelector(`[data-section="${s.id}"]`)
-        .scrollIntoView({ behavior: 'smooth', block: 'center' });
+      newSec.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
 
     ctx.app.querySelector('[data-new-client]').onclick = () => openNewClient();

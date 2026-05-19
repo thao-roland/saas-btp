@@ -20,7 +20,7 @@ export function renderClients(ctx) {
   function cardHtml(c) {
     const s = stats(c);
     return `
-    <div class="card card-pad reveal" data-client="${c.id}" style="cursor:pointer">
+    <div class="card card-pad" data-client="${c.id}" style="cursor:pointer">
       <div class="flex items-center gap-sm" style="margin-bottom:.8rem">
         <span class="avatar lg" style="background:var(--accent-soft);color:var(--accent-strong)">${initials(c.name)}</span>
         <div class="grow" style="min-width:0">
