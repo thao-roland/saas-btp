@@ -75,12 +75,6 @@ const P = {
   dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   signature: '<path d="M3 17c3 0 3-9 6-9s2 7 5 7 4-5 7-5M3 21h18"/>',
   rocket: '<path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M9 12l3 3M14.5 4.5C18 1 22 2 22 2s1 4-2.5 7.5L13 16l-5-5 6.5-6.5Z"/><circle cx="15" cy="9" r="1.3"/>',
-  crane: '<path d="M3 21h7M6 21V5M3 5h15M6 5l3 4H6M14 5v5"/><path d="M12.5 10h3l-1.5 2.6Z"/>',
-  cal2: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M7 14h3v3H7z"/>',
-  photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.8"/><path d="m3 17 5-4 4 3 3-3 6 5"/>',
-  pen: '<path d="M3 17c3 0 3-9 6-9s2 7 5 7 4-5 7-5"/><path d="M3 21h18"/>',
-  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
-  expand: '<path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/>',
 };
 
 export function icon(name, cls = '') {
