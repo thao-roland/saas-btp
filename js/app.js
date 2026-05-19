@@ -13,6 +13,10 @@ import { renderLibrary } from './pages/library.js';
 import { renderInvoices } from './pages/invoices.js';
 import { renderAccount } from './pages/account.js';
 import { renderShare } from './pages/share.js';
+import { renderChantiers } from './pages/chantiers.js';
+import { renderChantierDetail } from './pages/chantier-detail.js';
+import { renderPlanning } from './pages/planning.js';
+import { renderValidation } from './pages/valider.js';
 
 applyTheme(getTheme());
 const app = document.getElementById('app');
@@ -35,6 +39,10 @@ const ROUTES = [
   { re: /^\/app\/library\/?$/, page: renderLibrary },
   { re: /^\/app\/invoices\/?$/, page: renderInvoices },
   { re: /^\/app\/account\/?$/, page: renderAccount },
+  { re: /^\/app\/chantiers\/?$/, page: renderChantiers },
+  { re: /^\/app\/chantiers\/([\w-]+)\/?$/, page: renderChantierDetail, params: m => ({ id: m[1] }) },
+  { re: /^\/app\/planning\/?$/, page: renderPlanning },
+  { re: /^\/valider\/([\w-]+)\/?$/, page: renderValidation, public: true, params: m => ({ token: m[1] }) },
 ];
 
 function router() {
