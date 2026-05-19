@@ -42,16 +42,30 @@ export function renderAccount(ctx) {
   const u = currentUser();
   let tab = TABS.some(t => t.key === ctx.frag) ? ctx.frag : 'profil';
   let billing = 'month';
+  const activating = !!(ctx.query && ctx.query.checkout === 'success');
 
   // Retour de paiement Stripe Checkout
   if (ctx.query && ctx.query.checkout) {
     tab = 'abonnement';
-    if (ctx.query.checkout === 'success') {
-      toast('Paiement confirmé — votre abonnement est en cours d\'activation.');
-      setTimeout(async () => { try { await storeInit(); window.dispatchEvent(new Event('rerender')); } catch {} }, 2500);
-    } else {
-      toast('Paiement annulé — aucun changement effectué.', 'info');
+    if (ctx.query.checkout === 'success') pollActivation();
+    else toast('Paiement annulé — aucun changement effectué.', 'info');
+  }
+
+  // Interroge la base jusqu'à ce que le webhook Stripe ait activé l'abonnement
+  async function pollActivation() {
+    toast('Paiement reçu — activation de votre abonnement en cours…');
+    for (let i = 0; i < 14; i++) {
+      await new Promise(r => setTimeout(r, 2500));
+      try { await storeInit(); } catch {}
+      const s = getSubscription();
+      if (s.plan && s.plan !== 'starter') {
+        toast('Abonnement ' + (PLANS[s.plan] ? PLANS[s.plan].name : '') + ' activé — devis illimités débloqués !');
+        ctx.navigate('#/app/account#abonnement');
+        return;
+      }
     }
+    toast("L'abonnement n'apparaît pas encore. Patientez une minute puis cliquez « Actualiser ». Si rien ne change, vérifiez le webhook Stripe (livraisons dans Stripe → Webhooks).", 'err');
+    ctx.navigate('#/app/account#abonnement');
   }
 
   // ---------- Onglet : Profil entreprise ----------
@@ -181,6 +195,15 @@ export function renderAccount(ctx) {
     const priceOf = (p) => yearly ? p.priceYear : p.price;
 
     return `
+    ${activating ? `
+    <div class="card card-pad" style="display:flex;gap:.9rem;align-items:center;margin-bottom:1rem;
+      background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 30%,transparent)">
+      <span class="spin" style="width:22px;height:22px;border:3px solid color-mix(in srgb,var(--accent) 30%,transparent);border-top-color:var(--accent);border-radius:50%"></span>
+      <div>
+        <strong style="font-size:.95rem">Activation de votre abonnement en cours…</strong>
+        <div class="dim" style="font-size:.84rem">Le paiement est confirmé. Cette page se met à jour automatiquement dès que l'abonnement est actif (quelques secondes).</div>
+      </div>
+    </div>` : ''}
     <div class="card card-pad">
       <div class="flex-between wrap-flex gap">
         <div>
@@ -213,9 +236,12 @@ export function renderAccount(ctx) {
           <strong style="color:var(--danger);font-size:.88rem">${icon('warn')} Échec de paiement</strong>
           <p style="font-size:.84rem;margin-top:.3rem">Votre dernier règlement a échoué. Mettez à jour votre moyen de paiement pour conserver votre plan.</p>
         </div>` : ''}
-      ${cloud && sub.stripe_customer_id ? `
-        <button class="btn btn-ghost" id="manage-sub" style="margin-top:1.1rem">
-          ${icon('wallet')} Gérer mon abonnement (factures, paiement, résiliation)</button>` : ''}
+      <div class="flex gap-sm wrap-flex" style="margin-top:1.1rem">
+        ${cloud ? `<button class="btn btn-ghost btn-sm" id="refresh-sub">${icon('refresh')} Actualiser</button>` : ''}
+        ${cloud && sub.stripe_customer_id ? `
+          <button class="btn btn-ghost" id="manage-sub">
+            ${icon('wallet')} Gérer mon abonnement (factures, paiement, résiliation)</button>` : ''}
+      </div>
     </div>
 
     <div class="flex-between wrap-flex gap" style="margin:1.6rem 0 .9rem">
@@ -371,6 +397,15 @@ export function renderAccount(ctx) {
       ctx.app.querySelector('[data-tab-content]').innerHTML = abonnementTab();
       bind();
     });
+
+    // Actualiser l'état de l'abonnement (recharge depuis Supabase)
+    const refresh = ctx.app.querySelector('#refresh-sub');
+    if (refresh) refresh.onclick = async () => {
+      refresh.disabled = true;
+      refresh.innerHTML = `<span class="spin" style="width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%"></span> Actualisation…`;
+      try { await storeInit(); } catch {}
+      ctx.navigate('#/app/account#abonnement');
+    };
 
     // Portail de gestion d'abonnement Stripe
     const manage = ctx.app.querySelector('#manage-sub');

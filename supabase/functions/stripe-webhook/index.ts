@@ -33,9 +33,18 @@ for (const [env, plan] of [
   if (id) PRICE_TO_PLAN[id] = plan;
 }
 
+// Date de fin de période — robuste aux variations de l'API Stripe
+// (selon la version, le champ est sur l'abonnement OU sur ses items)
+function periodEndISO(sub: any): string | null {
+  const ts = sub?.current_period_end ?? sub?.items?.data?.[0]?.current_period_end ?? null;
+  if (!ts) return null;
+  const d = new Date(ts * 1000);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 // Met à jour l'abonnement d'une entreprise à partir d'un objet Subscription
 async function syncSubscription(sub: Stripe.Subscription) {
-  const entrepriseId = sub.metadata?.entreprise_id;
+  const entrepriseId = (sub.metadata as Record<string, string>)?.entreprise_id;
   const priceId = sub.items.data[0]?.price.id;
   const plan = (priceId && PRICE_TO_PLAN[priceId]) || "pro";
   const interval = sub.items.data[0]?.price.recurring?.interval ?? "month";
@@ -46,15 +55,23 @@ async function syncSubscription(sub: Stripe.Subscription) {
     billing_interval: interval,
     stripe_customer_id: sub.customer as string,
     stripe_subscription_id: sub.id,
-    current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+    current_period_end: periodEndISO(sub),
     cancel_at_period_end: sub.cancel_at_period_end,
     updated_at: new Date().toISOString(),
   };
 
   // Cible l'entreprise via les métadonnées, sinon via le customer Stripe
-  const query = supabase.from("abonnements").update(patch);
-  if (entrepriseId) await query.eq("entreprise_id", entrepriseId);
-  else await query.eq("stripe_customer_id", sub.customer as string);
+  const col = entrepriseId ? "entreprise_id" : "stripe_customer_id";
+  const val = entrepriseId || (sub.customer as string);
+  const { data, error } = await supabase
+    .from("abonnements").update(patch).eq(col, val).select();
+
+  if (error) throw new Error("MAJ abonnement : " + error.message);
+  if (!data || data.length === 0) {
+    console.warn(`Aucun abonnement mis à jour (${col}=${val}, sub=${sub.id})`);
+  } else {
+    console.log(`Abonnement -> ${patch.plan}/${patch.status} pour ${col}=${val}`);
+  }
 }
 
 Deno.serve(async (req) => {
