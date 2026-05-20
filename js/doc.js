@@ -8,13 +8,16 @@ export function renderQuoteDoc(q, owner, client, opts = {}) {
   const kind = opts.kind || 'Devis';
   const docNumber = opts.number || q.number;
   const c = computeQuote(q);
+  const noTva = !!q.noTva;
   const co = owner.company;
   const logo = co.logo
     ? `<img class="doc-logo" src="${co.logo}" alt="logo" />`
     : `<div class="doc-logo ph">${escapeHtml((co.name || 'E')[0])}</div>`;
 
+  // Nombre de colonnes du tableau (5 avec TVA, 4 sans)
+  const colSpan = noTva ? 4 : 5;
   const rows = q.sections.filter(s => s.lines.length).map(s => {
-    const head = `<tr class="sec-row"><td colspan="5">${escapeHtml(SECTION_TYPES[s.type]?.label || s.label)}</td></tr>`;
+    const head = `<tr class="sec-row"><td colspan="${colSpan}">${escapeHtml(SECTION_TYPES[s.type]?.label || s.label)}</td></tr>`;
     const lines = s.lines.map(l => {
       const total = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
       const pu = (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
@@ -22,7 +25,7 @@ export function renderQuoteDoc(q, owner, client, opts = {}) {
         <td>${escapeHtml(l.designation || '—')}${l.detail ? `<br><span style="color:#8a867c;font-size:.74rem">${escapeHtml(l.detail)}</span>` : ''}</td>
         <td class="r">${num(l.qty)} ${escapeHtml(l.unit || '')}</td>
         <td class="r">${eur(pu)}</td>
-        <td class="r">${num(l.tva, 1)} %</td>
+        ${noTva ? '' : `<td class="r">${num(l.tva, 1)} %</td>`}
         <td class="r">${eur(total)}</td>
       </tr>`;
     }).join('');
@@ -98,24 +101,29 @@ export function renderQuoteDoc(q, owner, client, opts = {}) {
 
     <table class="doc-tbl">
       <thead><tr>
-        <th>Désignation</th><th class="r">Quantité</th><th class="r">Prix unit. HT</th>
-        <th class="r">TVA</th><th class="r">Total HT</th>
+        <th>Désignation</th><th class="r">Quantité</th>
+        <th class="r">${noTva ? 'Prix unitaire' : 'Prix unit. HT'}</th>
+        ${noTva ? '' : '<th class="r">TVA</th>'}
+        <th class="r">${noTva ? 'Total' : 'Total HT'}</th>
       </tr></thead>
-      <tbody>${rows || '<tr><td colspan="5" style="color:#8a867c">Aucune ligne saisie.</td></tr>'}</tbody>
+      <tbody>${rows || `<tr><td colspan="${colSpan}" style="color:#8a867c">Aucune ligne saisie.</td></tr>`}</tbody>
     </table>
 
     <div class="doc-totals">
-      <div class="tr"><span>Total HT</span><span>${eur(c.ht)}</span></div>
+      <div class="tr"><span>${noTva ? 'Sous-total' : 'Total HT'}</span><span>${eur(c.ht)}</span></div>
       ${c.discount > 0 ? `<div class="tr"><span>Remise (${num(q.globalDiscount, 1)} %)</span><span>− ${eur(c.discount)}</span></div>` : ''}
-      ${c.discount > 0 ? `<div class="tr"><span>Total HT net</span><span>${eur(c.htNet)}</span></div>` : ''}
+      ${c.discount > 0 ? `<div class="tr"><span>${noTva ? 'Total après remise' : 'Total HT net'}</span><span>${eur(c.htNet)}</span></div>` : ''}
       ${tvaRows}
-      <div class="tr grand"><span>Total TTC</span><span>${eur(c.ttc)}</span></div>
+      <div class="tr grand"><span>${noTva ? 'Total à payer' : 'Total TTC'}</span><span>${eur(c.ttc)}</span></div>
     </div>
+
+    ${noTva ? `<p style="margin-top:1rem;font-size:.78rem;color:#57544d;font-style:italic">
+      TVA non applicable, art. 293 B du CGI.</p>` : ''}
 
     ${payRows ? `
     <div style="clear:both;margin-top:2rem">
       <div class="dp-lbl" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:#8a867c;font-weight:700;margin-bottom:.4rem">Échéancier de paiement</div>
-      <table class="doc-tbl"><thead><tr><th>Tranche</th><th class="r">Part</th><th class="r">Montant TTC</th></tr></thead>
+      <table class="doc-tbl"><thead><tr><th>Tranche</th><th class="r">Part</th><th class="r">${noTva ? 'Montant' : 'Montant TTC'}</th></tr></thead>
       <tbody>${payRows}</tbody></table>
     </div>` : ''}
 

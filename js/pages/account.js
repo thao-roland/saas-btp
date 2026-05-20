@@ -139,6 +139,18 @@ export function renderAccount(ctx) {
     return `
     <form data-form="parametres">
       <div class="card card-pad">
+        <h3 style="font-size:1.15rem">Régime de TVA</h3>
+        <p class="dim" style="font-size:.85rem;margin:.3rem 0 .8rem">
+          Décochez cette case si votre entreprise n'est pas assujettie à la TVA
+          (auto-entrepreneur en franchise en base — art. 293 B du CGI).
+          Les nouveaux devis seront alors créés sans TVA.</p>
+        <label class="checkrow">
+          <input type="checkbox" name="tvaEnabled" ${s.tvaEnabled !== false ? 'checked' : ''}>
+          <span style="font-weight:500">Mon entreprise applique la TVA sur ses devis</span>
+        </label>
+      </div>
+
+      <div class="card card-pad mt">
         <h3 style="font-size:1.15rem">Numérotation & valeurs par défaut</h3>
         <div class="field-row cols-2" style="margin-top:1rem">
           <div class="field" style="margin:0"><label>Préfixe de numérotation des devis</label>
@@ -368,6 +380,7 @@ export function renderAccount(ctx) {
         toast('Profil entreprise enregistré.');
       } else if (which === 'parametres') {
         updateSettings({
+          tvaEnabled: !!fd.tvaEnabled,
           quotePrefix: fd.quotePrefix || 'DEV',
           invoicePrefix: fd.invoicePrefix || 'FAC',
           defaultTva: Number(fd.defaultTva),

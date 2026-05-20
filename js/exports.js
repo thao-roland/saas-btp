@@ -59,6 +59,7 @@ function xmlCell(value, type = 'String', styleId) {
 
 export function exportExcel(q, owner, client) {
   const c = computeQuote(q);
+  const noTva = !!q.noTva;
   const co = owner.company;
   const rowsXml = [];
   const R = (cells) => rowsXml.push(`<Row>${cells}</Row>`);
@@ -74,39 +75,41 @@ export function exportExcel(q, owner, client) {
   R(xmlCell('Date', 'String', 'h') + xmlCell(dateLong(q.date)));
   R(xmlCell('Validité', 'String', 'h') + xmlCell(dateLong(q.validUntil)));
   blank();
-  R(['Section', 'Désignation', 'Détail', 'Unité', 'Quantité', 'Prix unit. HT', 'Coef. marge', 'TVA %', 'Total HT']
-    .map(h => xmlCell(h, 'String', 'th')).join(''));
+  const headers = noTva
+    ? ['Section', 'Désignation', 'Détail', 'Unité', 'Quantité', 'Prix unitaire', 'Coef. marge', 'Total']
+    : ['Section', 'Désignation', 'Détail', 'Unité', 'Quantité', 'Prix unit. HT', 'Coef. marge', 'TVA %', 'Total HT'];
+  R(headers.map(h => xmlCell(h, 'String', 'th')).join(''));
 
   for (const s of q.sections) {
     for (const l of s.lines) {
       const total = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
-      R(
+      const base =
         xmlCell(SECTION_TYPES[s.type]?.label || s.label) +
         xmlCell(l.designation || '') +
         xmlCell(l.detail || '') +
         xmlCell(l.unit || '') +
         xmlCell(l.qty, 'Number') +
         xmlCell(l.unitPrice, 'Number', 'eur') +
-        xmlCell(l.marginCoef, 'Number') +
-        xmlCell(l.tva, 'Number') +
-        xmlCell(total, 'Number', 'eur')
-      );
+        xmlCell(l.marginCoef, 'Number');
+      R(base + (noTva ? '' : xmlCell(l.tva, 'Number')) + xmlCell(total, 'Number', 'eur'));
     }
   }
   blank();
-  R(xmlCell('', 'String') + xmlCell('', 'String') + xmlCell('', 'String') + xmlCell('', 'String') +
-    xmlCell('', 'String') + xmlCell('', 'String') + xmlCell('', 'String') +
-    xmlCell('Total HT', 'String', 'th') + xmlCell(c.ht, 'Number', 'eurB'));
+  // Nombre de cellules vides avant la cellule "label" des totaux
+  const pad = noTva ? 6 : 7;
+  const empties = () => Array(pad).fill(xmlCell('', 'String')).join('');
+  R(empties() + xmlCell(noTva ? 'Sous-total' : 'Total HT', 'String', 'th') + xmlCell(c.ht, 'Number', 'eurB'));
   if (c.discount > 0) {
-    R(Array(7).fill(xmlCell('', 'String')).join('') +
-      xmlCell('Remise', 'String', 'th') + xmlCell(-c.discount, 'Number', 'eur'));
+    R(empties() + xmlCell('Remise', 'String', 'th') + xmlCell(-c.discount, 'Number', 'eur'));
   }
   for (const t of c.tvaLines) {
-    R(Array(7).fill(xmlCell('', 'String')).join('') +
-      xmlCell('TVA ' + num(t.rate, 1) + ' %', 'String', 'th') + xmlCell(t.amount, 'Number', 'eur'));
+    R(empties() + xmlCell('TVA ' + num(t.rate, 1) + ' %', 'String', 'th') + xmlCell(t.amount, 'Number', 'eur'));
   }
-  R(Array(7).fill(xmlCell('', 'String')).join('') +
-    xmlCell('TOTAL TTC', 'String', 'th') + xmlCell(c.ttc, 'Number', 'eurB'));
+  R(empties() + xmlCell(noTva ? 'TOTAL' : 'TOTAL TTC', 'String', 'th') + xmlCell(c.ttc, 'Number', 'eurB'));
+  if (noTva) {
+    blank();
+    R(xmlCell('TVA non applicable, art. 293 B du CGI.', 'String', 'h'));
+  }
 
   const xml = `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -171,25 +174,34 @@ function buildWordBody(q, owner, client) {
       ${escapeHtml(client ? [client.address, [client.zip, client.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '')}
     </td>
   </tr></table>
-  ${q.title ? `<h3>${escapeHtml(q.title)}</h3>` : ''}
-  <table><tr><th>Désignation</th><th class="r">Qté</th><th class="r">P.U. HT</th><th class="r">TVA</th><th class="r">Total HT</th></tr>`;
+  ${q.title ? `<h3>${escapeHtml(q.title)}</h3>` : ''}`;
+  const noTva = !!q.noTva;
+  const colSpan = noTva ? 4 : 5;
+  body += `<table><tr>
+    <th>Désignation</th><th class="r">Qté</th>
+    <th class="r">${noTva ? 'Prix unitaire' : 'P.U. HT'}</th>
+    ${noTva ? '' : '<th class="r">TVA</th>'}
+    <th class="r">${noTva ? 'Total' : 'Total HT'}</th></tr>`;
   for (const s of q.sections.filter(s => s.lines.length)) {
-    body += `<tr><td class="sec" colspan="5">${escapeHtml(SECTION_TYPES[s.type]?.label || s.label)}</td></tr>`;
+    body += `<tr><td class="sec" colspan="${colSpan}">${escapeHtml(SECTION_TYPES[s.type]?.label || s.label)}</td></tr>`;
     for (const l of s.lines) {
       const total = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
       const pu = (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
       body += `<tr><td>${escapeHtml(l.designation)}${l.detail ? `<br><span class="muted">${escapeHtml(l.detail)}</span>` : ''}</td>
         <td class="r">${num(l.qty)} ${escapeHtml(l.unit || '')}</td><td class="r">${eur(pu)}</td>
-        <td class="r">${num(l.tva, 1)} %</td><td class="r">${eur(total)}</td></tr>`;
+        ${noTva ? '' : `<td class="r">${num(l.tva, 1)} %</td>`}<td class="r">${eur(total)}</td></tr>`;
     }
   }
   body += `</table><br><table style="width:300px;margin-left:auto">
-    <tr><td>Total HT</td><td class="r">${eur(c.ht)}</td></tr>`;
+    <tr><td>${noTva ? 'Sous-total' : 'Total HT'}</td><td class="r">${eur(c.ht)}</td></tr>`;
   if (c.discount > 0) body += `<tr><td>Remise</td><td class="r">- ${eur(c.discount)}</td></tr>`;
   for (const t of c.tvaLines) body += `<tr><td>TVA ${num(t.rate, 1)} %</td><td class="r">${eur(t.amount)}</td></tr>`;
-  body += `<tr class="tot"><td>TOTAL TTC</td><td class="r">${eur(c.ttc)}</td></tr></table>`;
+  body += `<tr class="tot"><td>${noTva ? 'TOTAL' : 'TOTAL TTC'}</td><td class="r">${eur(c.ttc)}</td></tr></table>`;
+  if (noTva) {
+    body += `<p class="muted" style="font-style:italic">TVA non applicable, art. 293 B du CGI.</p>`;
+  }
   if (q.payments?.length) {
-    body += `<br><strong>Échéancier de paiement</strong><table><tr><th>Tranche</th><th class="r">Part</th><th class="r">Montant TTC</th></tr>`;
+    body += `<br><strong>Échéancier de paiement</strong><table><tr><th>Tranche</th><th class="r">Part</th><th class="r">${noTva ? 'Montant' : 'Montant TTC'}</th></tr>`;
     body += q.payments.map(p => `<tr><td>${escapeHtml(p.label)}</td><td class="r">${num(p.percent, 1)} %</td><td class="r">${eur(c.ttc * p.percent / 100)}</td></tr>`).join('');
     body += `</table>`;
   }

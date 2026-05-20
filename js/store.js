@@ -72,6 +72,7 @@ function defaultSettings() {
   return {
     quotePrefix: 'DEV', nextSeq: 1, invoicePrefix: 'FAC', nextInvoiceSeq: 1,
     defaultTva: 10, defaultMargin: 1.15, defaultValidity: 30,
+    tvaEnabled: true,                  // entreprise assujettie à la TVA ?
     defaultExecDelay: 'À convenir — 4 à 6 semaines après acceptation',
     defaultConditions:
       "Devis gratuit valable 30 jours. Acompte de 30 % à la signature. " +
@@ -244,6 +245,7 @@ export function rowToQuote(r) {
     sections: c.sections || [], globalDiscount: c.globalDiscount || 0,
     payments: c.payments || [], execDelay: c.execDelay || '',
     conditions: c.conditions || '', notes: c.notes || '',
+    noTva: !!c.noTva,
     shareToken: r.share_token, clientResponse: r.client_response || null,
   };
 }
@@ -256,7 +258,8 @@ function quoteToRow(q) {
     issued_on: q.date, valid_until: q.validUntil,
     content: {
       sections: q.sections, payments: q.payments, globalDiscount: q.globalDiscount,
-      execDelay: q.execDelay, conditions: q.conditions, notes: q.notes, createdAt: q.createdAt,
+      execDelay: q.execDelay, conditions: q.conditions, notes: q.notes,
+      noTva: !!q.noTva, createdAt: q.createdAt,
     },
     share_token: q.shareToken, client_response: q.clientResponse,
   };
@@ -493,6 +496,7 @@ export function newQuote() {
       { label: 'Solde à la fin des travaux', percent: 70 },
     ],
     execDelay: s.defaultExecDelay, conditions: s.defaultConditions, notes: '',
+    noTva: s.tvaEnabled === false,   // entreprise non assujettie à la TVA
     shareToken: token(), clientResponse: null,
   };
 }
@@ -639,6 +643,7 @@ export function lineTotalHT(l) {
   return (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
 }
 export function computeQuote(q) {
+  const noTva = !!q.noTva;
   let ht = 0;
   const tvaMap = {}, sectionTotals = {};
   for (const s of q.sections) {
@@ -646,14 +651,20 @@ export function computeQuote(q) {
     for (const l of s.lines) {
       const t = lineTotalHT(l);
       st += t;
-      const rate = Number(l.tva) || 0;
-      tvaMap[rate] = (tvaMap[rate] || 0) + t;
+      if (!noTva) {
+        const rate = Number(l.tva) || 0;
+        tvaMap[rate] = (tvaMap[rate] || 0) + t;
+      }
     }
     sectionTotals[s.id] = st;
     ht += st;
   }
   const discount = ht * ((Number(q.globalDiscount) || 0) / 100);
   const htNet = ht - discount;
+  // Entreprise non assujettie à la TVA -> TVA = 0, total = HT net
+  if (noTva) {
+    return { ht, discount, htNet, tvaLines: [], tvaTotal: 0, ttc: htNet, sectionTotals };
+  }
   const ratio = ht > 0 ? htNet / ht : 1;
   let tvaTotal = 0;
   const tvaLines = Object.entries(tvaMap)

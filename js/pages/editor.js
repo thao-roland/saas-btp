@@ -45,10 +45,17 @@ export function renderEditor(ctx) {
     </select>`;
   }
 
+  // Grille à 7 colonnes (sans TVA) pour les entreprises non assujetties
+  const NO_TVA_GRID = 'style="grid-template-columns: minmax(150px,1fr) 64px 78px 86px 72px 96px 30px"';
+
   function lineRow(s, l) {
     const total = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (Number(l.marginCoef) || 1);
+    const tvaCell = q.noTva ? '' : `
+      <select class="select input-sm" data-l="tva">
+        ${TVA_RATES.map(t => `<option value="${t.rate}" ${Number(l.tva) === t.rate ? 'selected' : ''}>${num(t.rate, 1)} %</option>`).join('')}
+      </select>`;
     return `
-    <div class="line-row" data-line="${l.id}" data-sec="${s.id}">
+    <div class="line-row" data-line="${l.id}" data-sec="${s.id}" ${q.noTva ? NO_TVA_GRID : ''}>
       <div>
         <input class="input input-sm" data-l="designation" value="${escapeHtml(l.designation)}" placeholder="Désignation de la prestation">
         <input class="input input-sm" data-l="detail" value="${escapeHtml(l.detail || '')}" placeholder="Détail (optionnel)" style="margin-top:.3rem;font-size:.8rem">
@@ -57,9 +64,7 @@ export function renderEditor(ctx) {
       <input class="input input-sm" data-l="unit" value="${escapeHtml(l.unit || '')}" placeholder="u">
       <input class="input input-sm" data-l="unitPrice" type="number" step="0.01" min="0" value="${l.unitPrice}">
       <input class="input input-sm" data-l="marginCoef" type="number" step="0.01" min="1" value="${l.marginCoef}" title="Coefficient de marge">
-      <select class="select input-sm" data-l="tva">
-        ${TVA_RATES.map(t => `<option value="${t.rate}" ${Number(l.tva) === t.rate ? 'selected' : ''}>${num(t.rate, 1)} %</option>`).join('')}
-      </select>
+      ${tvaCell}
       <span class="line-total" data-line-total>${eur(total)}</span>
       <div style="display:flex;flex-direction:column;gap:2px">
         <button class="line-del" data-save-lib title="Enregistrer dans la bibliothèque" style="color:var(--accent-strong)">${icon('bookmark')}</button>
@@ -81,9 +86,11 @@ export function renderEditor(ctx) {
       </div>
       <div class="qsection-body">
         ${s.lines.length ? `
-        <div class="line-row line-head">
-          <span>Désignation</span><span>Qté</span><span>Unité</span><span>P.U. HT</span>
-          <span>Coef.</span><span>TVA</span><span style="text-align:right">Total HT</span><span></span>
+        <div class="line-row line-head" ${q.noTva ? NO_TVA_GRID : ''}>
+          <span>Désignation</span><span>Qté</span><span>Unité</span>
+          <span>P.U.${q.noTva ? '' : ' HT'}</span><span>Coef.</span>
+          ${q.noTva ? '' : '<span>TVA</span>'}
+          <span style="text-align:right">Total${q.noTva ? '' : ' HT'}</span><span></span>
         </div>
         <div data-lines>${s.lines.map(l => lineRow(s, l)).join('')}</div>
         ` : `<p class="dim" style="font-size:.85rem;padding:.6rem 0">Aucune ligne dans cette section.</p>`}
@@ -98,10 +105,13 @@ export function renderEditor(ctx) {
   function totalsPanel() {
     const c = computeQuote(q);
     const payTotal = (q.payments || []).reduce((a, p) => a + (Number(p.percent) || 0), 0);
+    const subLbl = q.noTva ? 'Sous-total' : 'Total HT brut';
+    const netLbl = q.noTva ? 'Total après remise' : 'Total HT net';
+    const grandLbl = q.noTva ? 'Total à payer' : 'Total TTC';
     return `
     <div class="panel" data-totals>
       <h3 style="font-size:1rem;font-family:var(--font-ui);font-weight:700;margin-bottom:.6rem">Récapitulatif</h3>
-      <div class="totals-row"><span class="tr-lbl">Total HT brut</span><span>${eur(c.ht)}</span></div>
+      <div class="totals-row"><span class="tr-lbl">${subLbl}</span><span>${eur(c.ht)}</span></div>
       <div class="totals-row">
         <span class="tr-lbl">Remise globale</span>
         <span class="flex items-center gap-sm">
@@ -109,13 +119,16 @@ export function renderEditor(ctx) {
             value="${q.globalDiscount || 0}" style="width:62px;text-align:right"> %
         </span>
       </div>
-      ${c.discount > 0 ? `<div class="totals-row"><span class="tr-lbl">Total HT net</span><span>${eur(c.htNet)}</span></div>` : ''}
+      ${c.discount > 0 ? `<div class="totals-row"><span class="tr-lbl">${netLbl}</span><span>${eur(c.htNet)}</span></div>` : ''}
       ${c.tvaLines.map(t => `
         <div class="totals-row"><span class="tr-lbl">TVA ${num(t.rate, 1)} % <span class="dim">· base ${eur(t.base)}</span></span><span>${eur(t.amount)}</span></div>`).join('')}
-      <div class="totals-row grand"><span class="tr-lbl">Total TTC</span><span>${eur(c.ttc)}</span></div>
-      <p class="dim" style="font-size:.72rem;margin-top:.7rem;line-height:1.5">
-        <strong>HT</strong> = prix hors taxes &nbsp;·&nbsp; <strong>TVA</strong> = taxe ajoutée
-        &nbsp;·&nbsp; <strong>TTC</strong> = montant final payé par le client.</p>
+      <div class="totals-row grand"><span class="tr-lbl">${grandLbl}</span><span>${eur(c.ttc)}</span></div>
+      ${q.noTva
+        ? `<p class="dim" style="font-size:.72rem;margin-top:.7rem;line-height:1.5">
+            <strong>TVA non applicable</strong> — art. 293 B du CGI (franchise en base de TVA).</p>`
+        : `<p class="dim" style="font-size:.72rem;margin-top:.7rem;line-height:1.5">
+            <strong>HT</strong> = prix hors taxes &nbsp;·&nbsp; <strong>TVA</strong> = taxe ajoutée
+            &nbsp;·&nbsp; <strong>TTC</strong> = montant final payé par le client.</p>`}
       ${payTotal !== 100 && q.payments?.length ? `
         <p class="field-err" style="margin-top:.5rem">${icon('warn')} Les versements totalisent ${num(payTotal, 1)} % au lieu de 100 %.</p>` : ''}
     </div>`;
@@ -244,15 +257,23 @@ export function renderEditor(ctx) {
                 `<option value="${k}" ${q.status === k ? 'selected' : ''}>${v.label}</option>`).join('')}
             </select>
           </div>
+          <div class="dropdown" style="margin-top:.6rem">
+            <label class="lbl">Régime de TVA</label>
+            <select class="select" data-noTva>
+              <option value="false" ${!q.noTva ? 'selected' : ''}>TVA applicable</option>
+              <option value="true" ${q.noTva ? 'selected' : ''}>TVA non applicable (art. 293 B)</option>
+            </select>
+          </div>
         </div>
         <div class="panel" style="background:var(--surface-2)">
           <div class="flex items-center gap-sm">
             <span style="color:var(--accent-strong)">${icon('info')}</span>
-            <strong style="font-size:.86rem">Marge & TVA</strong>
+            <strong style="font-size:.86rem">${q.noTva ? 'Régime de franchise' : 'Marge & TVA'}</strong>
           </div>
           <p class="dim" style="font-size:.8rem;margin-top:.5rem">
-            Le coefficient de marge multiplie le prix unitaire (1,15 = +15 %).
-            La TVA se règle ligne par ligne selon la nature des travaux.</p>
+            ${q.noTva
+              ? "Aucune TVA n'est ajoutée. La mention « TVA non applicable, art. 293 B du CGI » apparaîtra sur le devis."
+              : 'Le coefficient de marge multiplie le prix unitaire (1,15 = +15 %). La TVA se règle ligne par ligne selon la nature des travaux.'}</p>
         </div>
       </div>
     </div>`;
@@ -422,6 +443,16 @@ export function renderEditor(ctx) {
     });
 
     ctx.app.querySelector('[data-new-client]').onclick = () => openNewClient();
+
+    // Sélecteur de régime de TVA : on reconstruit l'éditeur pour
+    // afficher/masquer les colonnes TVA partout d'un coup
+    const tvaSelect = ctx.app.querySelector('[data-noTva]');
+    if (tvaSelect) tvaSelect.onchange = () => {
+      q.noTva = tvaSelect.value === 'true';
+      build();
+      autosave();
+      toast(q.noTva ? 'TVA désactivée sur ce devis.' : 'TVA réactivée.');
+    };
 
     ctx.app.querySelector('[data-save]').onclick = () => { persist(); };
     ctx.app.querySelector('[data-preview]').onclick = () => openPreview();
