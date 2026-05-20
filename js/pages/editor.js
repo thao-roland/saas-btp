@@ -474,10 +474,10 @@ export function renderEditor(ctx) {
       const client = getClient(q.clientId);
       menu.querySelectorAll('button').forEach(bb => bb.onclick = () => {
         menu.remove();
-        if (bb.dataset.x === 'pdf') exportPDF(q, u, client);
-        if (bb.dataset.x === 'excel') exportExcel(q, u, client);
-        if (bb.dataset.x === 'word') exportWord(q, u, client);
-        toast('Export généré.');
+        const k = bb.dataset.x;
+        if (k === 'pdf') exportPDF(q, u, client);            // toasts gérés en interne
+        else if (k === 'excel') { exportExcel(q, u, client); toast('Export Excel téléchargé.'); }
+        else if (k === 'word') { exportWord(q, u, client); toast('Export Word téléchargé.'); }
       });
       setTimeout(() => document.addEventListener('click', function off() { menu.remove(); document.removeEventListener('click', off); }, { once: true }));
     };

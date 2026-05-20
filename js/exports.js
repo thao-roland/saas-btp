@@ -3,7 +3,7 @@
 // ============================================================
 import { computeQuote, SECTION_TYPES } from './store.js';
 import { renderQuoteDoc } from './doc.js';
-import { eur, num, escapeHtml, downloadBlob, dateLong } from './ui.js';
+import { eur, num, escapeHtml, downloadBlob, dateLong, toast } from './ui.js';
 
 const DOC_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
@@ -37,17 +37,66 @@ h3{font-family:'Sora',sans-serif;font-weight:600}
 @media print{body{background:#fff;padding:0}.doc-page{box-shadow:none;border-radius:0;max-width:100%;padding:0}}
 `;
 
-// ---------- PDF (via fenêtre d'impression du navigateur) ----------
-export function exportPDF(q, owner, client, opts = {}) {
-  const w = window.open('', '_blank', 'width=900,height=1100');
-  if (!w) { alert('Veuillez autoriser les fenêtres pop-up pour générer le PDF.'); return; }
+// ---------- PDF — téléchargement direct via html2pdf (html2canvas + jsPDF) ----------
+// Chargé à la demande depuis un CDN public, avec un CDN de secours.
+let _h2p = null;
+const H2P_CDNS = [
+  'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js',
+  'https://unpkg.com/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js',
+];
+function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url; s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('script load failed: ' + url));
+    document.head.appendChild(s);
+  });
+}
+async function loadHtml2Pdf() {
+  if (_h2p) return _h2p;
+  if (window.html2pdf) { _h2p = window.html2pdf; return _h2p; }
+  let lastErr;
+  for (const url of H2P_CDNS) {
+    try { await loadScript(url); break; }
+    catch (e) { lastErr = e; }
+  }
+  if (!window.html2pdf) {
+    throw new Error('Bibliothèque PDF indisponible (CDN injoignable). ' + (lastErr?.message || ''));
+  }
+  _h2p = window.html2pdf;
+  return _h2p;
+}
+
+const safeFile = (s) => String(s).replace(/[^a-z0-9_\-]+/gi, '_').slice(0, 80);
+
+export async function exportPDF(q, owner, client, opts = {}) {
   const label = (opts.kind || 'Devis') + ' ' + (opts.number || q.number);
-  w.document.write(`<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
-    <title>${escapeHtml(label)}</title><style>${DOC_CSS}</style></head>
-    <body>${renderQuoteDoc(q, owner, client, opts)}</body></html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(() => { w.print(); }, 650);
+  toast('Génération du PDF en cours…');
+
+  // Conteneur invisible avec le document mis en page et son CSS
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:820px;background:#ffffff;color:#1a1a18';
+  wrap.innerHTML = `<style>${DOC_CSS}</style>${renderQuoteDoc(q, owner, client, opts)}`;
+  document.body.appendChild(wrap);
+
+  try {
+    const html2pdf = await loadHtml2Pdf();
+    await html2pdf().from(wrap.querySelector('.doc-page')).set({
+      filename: safeFile(label) + '.pdf',
+      margin: [12, 12, 12, 12],
+      image: { type: 'jpeg', quality: 0.96 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 820 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.doc-sign', '.doc-totals'] },
+    }).save();
+    toast('PDF téléchargé.');
+  } catch (e) {
+    console.error('exportPDF:', e);
+    toast('PDF impossible : ' + (e.message || 'erreur inconnue'), 'err');
+  } finally {
+    wrap.remove();
+  }
 }
 
 // ---------- Excel (SpreadsheetML 2003 — ouvert nativement par Excel) ----------
