@@ -3,7 +3,7 @@
 // ============================================================
 import { icon } from '../icons.js';
 import { appLayout, bindAppLayout } from '../layout.js';
-import { currentUser, getClient, computeQuote, save } from '../store.js';
+import { currentUser, getClient, computeQuote, save, convertToInvoice, QUOTE_STATUS } from '../store.js';
 import { eur, dateFR, escapeHtml, statusBadge, toast, modal, bindDropdown } from '../ui.js';
 import { renderQuoteDoc } from '../doc.js';
 import { exportPDF } from '../exports.js';
@@ -34,12 +34,76 @@ export function renderInvoices(ctx) {
     });
   }
 
+  // Devis pas encore convertis en facture
+  function convertibleQuotes() {
+    const used = new Set(u.invoices.map(i => i.quoteId));
+    return u.quotes.filter(q => !used.has(q.id))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // Modal : choisir un devis à transformer en facture
+  function openNewInvoice() {
+    const list = convertibleQuotes();
+    modal({
+      title: 'Nouvelle facture', size: 'lg',
+      body: `
+        <p class="muted" style="font-size:.9rem;margin-bottom:1rem">
+          Sélectionnez le devis à transformer en facture. Tous les postes, la TVA
+          et l'éventuelle remise sont repris automatiquement.</p>
+        ${list.length ? `
+          <div class="search" style="margin-bottom:1rem">${icon('search')}
+            <input id="conv-search" placeholder="Numéro, objet, client..."></div>
+          <div id="conv-list" class="stack" style="max-height:55vh;overflow:auto"></div>
+        ` : `
+          <div class="empty" style="padding:1.5rem">
+            <div class="e-icon">${icon('doc')}</div>
+            <h3 style="font-size:1.05rem">Tous vos devis ont déjà été facturés</h3>
+            <p>Créez d'abord un nouveau devis, puis revenez ici pour en générer la facture.</p>
+            <a href="#/app/quotes/new" class="btn btn-primary btn-sm">${icon('plus')} Créer un devis</a>
+          </div>`}`,
+      onMount(el, close) {
+        if (!list.length) return;
+        const host = el.querySelector('#conv-list');
+        const draw = (filter = '') => {
+          const f = filter.toLowerCase();
+          const items = list.filter(q => {
+            const c = getClient(q.clientId);
+            return q.number.toLowerCase().includes(f)
+              || (q.title || '').toLowerCase().includes(f)
+              || (c?.name || '').toLowerCase().includes(f);
+          });
+          host.innerHTML = items.map(q => {
+            const c = getClient(q.clientId);
+            return `
+            <div class="lib-item" data-q="${q.id}">
+              <span class="li-cat">${icon('doc')}</span>
+              <div class="li-meta">
+                <div class="li-name">${escapeHtml(q.number)} — ${escapeHtml(q.title || 'Sans objet')}</div>
+                <div class="li-sub">${escapeHtml(c?.name || 'Client non renseigné')} · ${dateFR(q.createdAt)}</div>
+              </div>
+              ${statusBadge(q.status, QUOTE_STATUS)}
+              <span class="li-price">${eur(computeQuote(q).ttc)}</span>
+            </div>`;
+          }).join('') || '<p class="dim">Aucun devis ne correspond.</p>';
+          host.querySelectorAll('[data-q]').forEach(it => it.onclick = () => {
+            const inv = convertToInvoice(it.dataset.q);
+            close();
+            if (inv) { toast('Facture créée : ' + inv.number); paint(); }
+          });
+        };
+        draw();
+        el.querySelector('#conv-search').addEventListener('input', e => draw(e.target.value));
+      },
+    });
+  }
+
   function content() {
     const paid = u.invoices.filter(i => i.status === 'paid').reduce((s, i) => s + total(i), 0);
     const due = u.invoices.filter(i => i.status === 'unpaid').reduce((s, i) => s + total(i), 0);
     return `
     <div class="page-head">
       <div><h2>Factures</h2><p>Issues de vos devis acceptés — conversion en un clic</p></div>
+      <button class="btn btn-primary" data-new-inv>${icon('plus')} Nouvelle facture</button>
     </div>
     ${u.invoices.length ? `
     <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1.2rem">
@@ -74,14 +138,15 @@ export function renderInvoices(ctx) {
     <div class="card empty">
       <div class="e-icon">${icon('invoice')}</div>
       <h3>Aucune facture pour l'instant</h3>
-      <p>Convertissez un devis accepté en facture depuis la liste des devis : tous les postes sont repris automatiquement.</p>
-      <a href="#/app/quotes" class="btn btn-primary">${icon('doc')} Voir mes devis</a>
+      <p>Choisissez un devis à transformer en facture — tous les postes sont repris automatiquement.</p>
+      <button class="btn btn-primary" data-new-inv>${icon('plus')} Créer une facture</button>
     </div>`}`;
   }
 
   function paint() { ctx.app.querySelector('.content').innerHTML = content(); bind(); }
 
   function bind() {
+    ctx.app.querySelectorAll('[data-new-inv]').forEach(b => b.onclick = openNewInvoice);
     ctx.app.querySelectorAll('tr[data-inv]').forEach(tr => tr.onclick = (e) => {
       if (e.target.closest('[data-menu]')) return;
       openInvoice(u.invoices.find(i => i.id === tr.dataset.inv));
