@@ -6,7 +6,7 @@ import { appLayout, bindAppLayout } from '../layout.js';
 import { currentUser, getClient, computeQuote, save, convertToInvoice, QUOTE_STATUS, INVOICE_KINDS } from '../store.js';
 import { eur, dateFR, escapeHtml, statusBadge, toast, modal, bindDropdown } from '../ui.js';
 import { renderQuoteDoc } from '../doc.js';
-import { exportPDF } from '../exports.js';
+import { exportPDF, exportExcel, exportWord } from '../exports.js';
 
 const INV_STATUS = {
   unpaid: { label: 'À encaisser', color: 'amber' },
@@ -34,13 +34,18 @@ export function renderInvoices(ctx) {
 
   function openInvoice(inv) {
     const client = getClient(inv.clientId);
+    const o = docOpts(inv);
     modal({
       title: 'Facture ' + inv.number, size: 'lg',
-      body: renderQuoteDoc(inv.snapshot, u, client, docOpts(inv)),
+      body: renderQuoteDoc(inv.snapshot, u, client, o),
       foot: `<button class="btn btn-ghost" data-close>Fermer</button>
+             <button class="btn btn-ghost" id="inv-xls">${icon('excel')} Excel</button>
+             <button class="btn btn-ghost" id="inv-doc">${icon('word')} Word</button>
              <button class="btn btn-primary" id="inv-pdf">${icon('pdf')} Télécharger en PDF</button>`,
       onMount(el) {
-        el.querySelector('#inv-pdf').onclick = () => exportPDF(inv.snapshot, u, client, docOpts(inv));
+        el.querySelector('#inv-pdf').onclick = () => exportPDF(inv.snapshot, u, client, o);
+        el.querySelector('#inv-xls').onclick = () => { exportExcel(inv.snapshot, u, client, o); toast('Export Excel téléchargé.'); };
+        el.querySelector('#inv-doc').onclick = () => { exportWord(inv.snapshot, u, client, o); toast('Export Word téléchargé.'); };
       },
     });
   }
@@ -271,12 +276,17 @@ export function renderInvoices(ctx) {
       bindDropdown(btn, `
         <a data-act="view">${icon('eye')} Consulter</a>
         <a data-act="pdf">${icon('pdf')} Télécharger en PDF</a>
+        <a data-act="excel">${icon('excel')} Export Excel</a>
+        <a data-act="word">${icon('word')} Export Word</a>
         <div class="dropdown-sep"></div>
         <button data-act="toggle">${icon(inv.status === 'paid' ? 'clock' : 'check')} Marquer ${inv.status === 'paid' ? 'à encaisser' : 'comme payée'}</button>`,
         (act) => {
           const client = getClient(inv.clientId);
+          const o = docOpts(inv);
           if (act === 'view') openInvoice(inv);
-          else if (act === 'pdf') exportPDF(inv.snapshot, u, client, docOpts(inv));
+          else if (act === 'pdf') exportPDF(inv.snapshot, u, client, o);
+          else if (act === 'excel') { exportExcel(inv.snapshot, u, client, o); toast('Export Excel téléchargé.'); }
+          else if (act === 'word') { exportWord(inv.snapshot, u, client, o); toast('Export Word téléchargé.'); }
           else if (act === 'toggle') {
             inv.status = inv.status === 'paid' ? 'unpaid' : 'paid';
             save();

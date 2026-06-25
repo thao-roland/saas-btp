@@ -74,21 +74,27 @@ export async function exportPDF(q, owner, client, opts = {}) {
   const label = (opts.kind || 'Devis') + ' ' + (opts.number || q.number);
   toast('Génération du PDF en cours…');
 
-  // Conteneur invisible avec le document mis en page et son CSS
+  // Conteneur attaché au document : il hérite de assets/app.css et le rendu
+  // est donc strictement identique à l'aperçu à l'écran.
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:820px;background:#ffffff;color:#1a1a18';
-  wrap.innerHTML = `<style>${DOC_CSS}</style>${renderQuoteDoc(q, owner, client, opts)}`;
+  wrap.style.cssText = 'position:fixed;left:-10000px;top:0;width:820px;background:#ffffff;color:#1a1a18;font-family:var(--font-ui,sans-serif)';
+  wrap.innerHTML = renderQuoteDoc(q, owner, client, opts);
+  // Annule l'ombre/le rayon du conteneur — propres au cadre d'aperçu
+  const page = wrap.querySelector('.doc-page');
+  if (page) { page.style.boxShadow = 'none'; page.style.borderRadius = '0'; }
   document.body.appendChild(wrap);
 
   try {
+    // Laisse les polices Google se charger avant la capture
+    if (document.fonts?.ready) { try { await document.fonts.ready; } catch {} }
     const html2pdf = await loadHtml2Pdf();
-    await html2pdf().from(wrap.querySelector('.doc-page')).set({
+    await html2pdf().from(page || wrap).set({
       filename: safeFile(label) + '.pdf',
-      margin: [12, 12, 12, 12],
+      margin: [10, 10, 12, 10],
       image: { type: 'jpeg', quality: 0.96 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 820 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 820, letterRendering: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
-      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.doc-sign', '.doc-totals'] },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.doc-sign', '.doc-totals', '.doc-parties', '.doc-head'] },
     }).save();
     toast('PDF téléchargé.');
   } catch (e) {
@@ -106,23 +112,29 @@ function xmlCell(value, type = 'String', styleId) {
   return `<Cell${s}><Data ss:Type="${type}">${v}</Data></Cell>`;
 }
 
-export function exportExcel(q, owner, client) {
+export function exportExcel(q, owner, client, opts = {}) {
   const c = computeQuote(q);
   const noTva = !!q.noTva;
   const co = owner.company;
+  const kind = (opts.kind || 'Devis').toUpperCase();
+  const docNum = opts.number || q.number;
+  const docTitle = opts.title ? opts.title.toUpperCase() : `${kind} ${docNum}`;
   const rowsXml = [];
   const R = (cells) => rowsXml.push(`<Row>${cells}</Row>`);
   const blank = () => rowsXml.push('<Row></Row>');
 
-  R(xmlCell('DEVIS ' + q.number, 'String', 'title'));
+  R(xmlCell(docTitle, 'String', 'title'));
   R(xmlCell(co.name || '', 'String', 'h'));
   R(xmlCell([co.address, co.zip, co.city].filter(Boolean).join(' ')));
   R(xmlCell('SIRET : ' + (co.siret || '—')));
   blank();
   R(xmlCell('Client', 'String', 'h') + xmlCell(client?.name || '—'));
   R(xmlCell('Objet', 'String', 'h') + xmlCell(q.title || '—'));
-  R(xmlCell('Date', 'String', 'h') + xmlCell(dateLong(q.date)));
-  R(xmlCell('Validité', 'String', 'h') + xmlCell(dateLong(q.validUntil)));
+  R(xmlCell('Date', 'String', 'h') + xmlCell(dateLong(opts.date || q.date)));
+  R(xmlCell(opts.kind === 'Facture' ? 'Échéance' : 'Validité', 'String', 'h')
+    + xmlCell(dateLong(opts.dueDate || q.validUntil)));
+  if (opts.paymentMethod) R(xmlCell('Mode de paiement', 'String', 'h') + xmlCell(opts.paymentMethod));
+  if (opts.kind === 'Facture' && co.iban) R(xmlCell('IBAN', 'String', 'h') + xmlCell(co.iban));
   blank();
   const headers = noTva
     ? ['Section', 'Désignation', 'Détail', 'Unité', 'Quantité', 'Prix unitaire', 'Coef. marge', 'Total']
@@ -172,7 +184,7 @@ export function exportExcel(q, owner, client) {
   <Style ss:ID="eur"><NumberFormat ss:Format="#,##0.00\\ &quot;€&quot;"/></Style>
   <Style ss:ID="eurB"><Font ss:Bold="1"/><NumberFormat ss:Format="#,##0.00\\ &quot;€&quot;"/></Style>
  </Styles>
- <Worksheet ss:Name="Devis ${escapeHtml(q.number)}">
+ <Worksheet ss:Name="${escapeHtml((opts.kind || 'Devis') + ' ' + docNum).slice(0, 28)}">
   <Table>
    <Column ss:Width="120"/><Column ss:Width="220"/><Column ss:Width="170"/>
    <Column ss:Width="55"/><Column ss:Width="65"/><Column ss:Width="85"/>
@@ -181,14 +193,16 @@ export function exportExcel(q, owner, client) {
   </Table>
  </Worksheet>
 </Workbook>`;
-  downloadBlob(new Blob([xml], { type: 'application/vnd.ms-excel' }), `Devis-${q.number}.xls`);
+  downloadBlob(new Blob([xml], { type: 'application/vnd.ms-excel' }), safeFile((opts.kind || 'Devis') + '-' + docNum) + '.xls');
 }
 
 // ---------- Word (.doc — HTML lu et éditable par Word) ----------
-export function exportWord(q, owner, client) {
+export function exportWord(q, owner, client, opts = {}) {
+  const kind = opts.kind || 'Devis';
+  const num = opts.number || q.number;
   const html = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office"
    xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-  <head><meta charset="utf-8"><title>Devis ${escapeHtml(q.number)}</title>
+  <head><meta charset="utf-8"><title>${escapeHtml(kind + ' ' + num)}</title>
   <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
   <style>
    body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a18;font-size:11pt}
@@ -200,14 +214,23 @@ export function exportWord(q, owner, client) {
    .r{text-align:right}
    .tot{font-weight:bold;font-size:13pt}
    .muted{color:#777;font-size:8.5pt}
-  </style></head><body>` + buildWordBody(q, owner, client) + `</body></html>`;
-  downloadBlob(new Blob(['﻿' + html], { type: 'application/msword' }), `Devis-${q.number}.doc`);
+   .pay-box{background:#faf6ef;border:1px solid #ecd9b6;padding:10pt;margin-top:14pt}
+   .pay-box .lbl{color:#b45309;font-size:8.5pt;text-transform:uppercase;letter-spacing:.06em;font-weight:bold;margin-bottom:4pt}
+   .iban{font-family:'Courier New',monospace;font-size:10pt;letter-spacing:.02em}
+  </style></head><body>` + buildWordBody(q, owner, client, opts) + `</body></html>`;
+  downloadBlob(new Blob(['﻿' + html], { type: 'application/msword' }), safeFile(kind + '-' + num) + '.doc');
 }
 
-function buildWordBody(q, owner, client) {
+function buildWordBody(q, owner, client, opts = {}) {
   const c = computeQuote(q);
   const co = owner.company;
-  let body = `<h1>DEVIS</h1>
+  const docKind = opts.kind || 'Devis';
+  const isInvoice = docKind === 'Facture';
+  const docNumber = opts.number || q.number;
+  const docTitle = (opts.title || docKind).toUpperCase();
+  const dateLabel = isInvoice ? 'Échéance' : 'Validité';
+  const dateValue = dateLong(isInvoice ? (opts.dueDate || q.validUntil) : q.validUntil);
+  let body = `<h1>${escapeHtml(docTitle)}</h1>
   <table style="border:none"><tr style="border:none">
     <td style="border:none;vertical-align:top">
       <strong>${escapeHtml(co.name || '')}</strong><br>
@@ -216,9 +239,9 @@ function buildWordBody(q, owner, client) {
       ${co.siret ? 'SIRET ' + escapeHtml(co.siret) : ''}
     </td>
     <td style="border:none;vertical-align:top;text-align:right">
-      <strong>N° ${escapeHtml(q.number)}</strong><br>
-      Date : ${escapeHtml(dateLong(q.date))}<br>
-      Validité : ${escapeHtml(dateLong(q.validUntil))}<br><br>
+      <strong>N° ${escapeHtml(docNumber)}</strong><br>
+      Date : ${escapeHtml(dateLong(opts.date || q.date))}<br>
+      ${escapeHtml(dateLabel)} : ${escapeHtml(dateValue)}<br><br>
       <strong>Client</strong><br>${escapeHtml(client?.name || '—')}<br>
       ${escapeHtml(client ? [client.address, [client.zip, client.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '')}
     </td>
@@ -249,15 +272,38 @@ function buildWordBody(q, owner, client) {
   if (noTva) {
     body += `<p class="muted" style="font-style:italic">TVA non applicable, art. 293 B du CGI.</p>`;
   }
-  if (q.payments?.length) {
+  if (!isInvoice && q.payments?.length) {
     body += `<br><strong>Échéancier de paiement</strong><table><tr><th>Tranche</th><th class="r">Part</th><th class="r">${noTva ? 'Montant' : 'Montant TTC'}</th></tr>`;
     body += q.payments.map(p => `<tr><td>${escapeHtml(p.label)}</td><td class="r">${num(p.percent, 1)} %</td><td class="r">${eur(c.ttc * p.percent / 100)}</td></tr>`).join('');
     body += `</table>`;
   }
-  if (q.execDelay) body += `<p><strong>Délai d'exécution :</strong> ${escapeHtml(q.execDelay)}</p>`;
-  if (q.conditions) body += `<p class="muted">${escapeHtml(q.conditions)}</p>`;
-  body += `<br><table style="border:none"><tr style="border:none">
-    <td style="border:1px dashed #bbb;height:80px;width:50%">Bon pour accord — le client (date et signature)</td>
-    <td style="border:1px dashed #bbb;height:80px">L'entreprise</td></tr></table>`;
+  if (isInvoice) {
+    body += `<div class="pay-box">
+      <div class="lbl">Modalités de règlement</div>
+      <table style="border:none;width:100%"><tr style="border:none">
+        <td style="border:none;vertical-align:top">
+          <span class="muted">À régler avant le</span><br>
+          <strong>${escapeHtml(dateValue)}</strong>
+        </td>
+        <td style="border:none;vertical-align:top">
+          <span class="muted">Mode de paiement</span><br>
+          <strong>${escapeHtml(opts.paymentMethod || 'Virement bancaire')}</strong>
+        </td>
+        <td style="border:none;vertical-align:top">
+          <span class="muted">Coordonnées bancaires (IBAN)</span><br>
+          <span class="iban">${escapeHtml(co.iban || '—')}</span>
+        </td>
+      </tr></table>
+      <p class="muted" style="margin-top:8pt">Pénalités de retard : taux égal à 3 fois le taux d'intérêt légal applicables sans rappel.
+      Indemnité forfaitaire pour frais de recouvrement : 40 € (art. L441-10 du Code de commerce). Pas d'escompte pour paiement anticipé.</p>
+    </div>`;
+  }
+  if (q.execDelay && !isInvoice) body += `<p><strong>Délai d'exécution :</strong> ${escapeHtml(q.execDelay)}</p>`;
+  if (q.conditions && !isInvoice) body += `<p class="muted">${escapeHtml(q.conditions)}</p>`;
+  if (!isInvoice) {
+    body += `<br><table style="border:none"><tr style="border:none">
+      <td style="border:1px dashed #bbb;height:80px;width:50%">Bon pour accord — le client (date et signature)</td>
+      <td style="border:1px dashed #bbb;height:80px">L'entreprise</td></tr></table>`;
+  }
   return body;
 }
