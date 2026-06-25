@@ -6,6 +6,8 @@ import { eur, num, dateLong, escapeHtml } from './ui.js';
 
 export function renderQuoteDoc(q, owner, client, opts = {}) {
   const kind = opts.kind || 'Devis';
+  const isInvoice = kind === 'Facture';
+  const docTitle = opts.title || kind;          // ex. « Facture d'acompte 30 % »
   const docNumber = opts.number || q.number;
   const c = computeQuote(q);
   const noTva = !!q.noTva;
@@ -68,7 +70,7 @@ export function renderQuoteDoc(q, owner, client, opts = {}) {
         </div>
       </div>
       <div class="doc-meta">
-        <div class="doc-title">${escapeHtml(kind)}</div>
+        <div class="doc-title">${escapeHtml(docTitle)}</div>
         <p>
           <strong>N° ${escapeHtml(docNumber)}</strong><br>
           Date : ${dateLong(opts.date || q.date)}<br>
@@ -127,8 +129,28 @@ export function renderQuoteDoc(q, owner, client, opts = {}) {
       <tbody>${payRows}</tbody></table>
     </div>` : ''}
 
-    ${q.execDelay ? `<div style="margin-top:1.4rem;font-size:.84rem"><strong>Délai d'exécution :</strong> ${escapeHtml(q.execDelay)}</div>` : ''}
+    ${q.execDelay && !isInvoice ? `<div style="margin-top:1.4rem;font-size:.84rem"><strong>Délai d'exécution :</strong> ${escapeHtml(q.execDelay)}</div>` : ''}
     ${q.notes ? `<div style="margin-top:.6rem;font-size:.84rem"><strong>Note :</strong> ${escapeHtml(q.notes)}</div>` : ''}
+
+    ${isInvoice ? `
+    <div style="margin-top:1.8rem;padding:1.1rem 1.2rem;background:#faf6ef;border:1px solid #ecd9b6;border-radius:10px">
+      <div class="dp-lbl" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;color:#b45309;font-weight:700;margin-bottom:.55rem">Modalités de règlement</div>
+      <div style="display:flex;flex-wrap:wrap;gap:1.2rem 2.2rem;font-size:.86rem">
+        <div><div style="color:#8a867c;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">À régler avant le</div>
+          <strong style="font-size:1rem">${dateLong(opts.dueDate || q.validUntil)}</strong></div>
+        <div><div style="color:#8a867c;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">Mode de paiement</div>
+          <strong>${escapeHtml(opts.paymentMethod || 'Virement bancaire')}</strong></div>
+        ${co.iban ? `<div style="flex:1;min-width:240px">
+          <div style="color:#8a867c;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">Coordonnées bancaires (IBAN)</div>
+          <strong style="font-family:'Courier New',monospace;font-size:.92rem;letter-spacing:.02em">${escapeHtml(co.iban)}</strong>
+        </div>` : `<div style="color:#b45309;font-size:.82rem"><em>Renseignez votre IBAN dans Mon entreprise pour qu'il apparaisse ici.</em></div>`}
+      </div>
+      <p style="margin-top:.8rem;font-size:.72rem;color:#57544d;line-height:1.55">
+        Pénalités de retard : taux égal à 3 fois le taux d'intérêt légal applicables sans rappel.
+        Indemnité forfaitaire pour frais de recouvrement : 40 € (art. L441-10 du Code de commerce).
+        Pas d'escompte pour paiement anticipé.
+      </p>
+    </div>` : ''}
 
     ${kind === 'Devis' ? `
     <div class="doc-sign">
@@ -137,11 +159,13 @@ export function renderQuoteDoc(q, owner, client, opts = {}) {
     </div>` : ''}
 
     <div class="doc-foot">
-      ${q.conditions ? escapeHtml(q.conditions) + '<br><br>' : ''}
+      ${q.conditions && !isInvoice ? escapeHtml(q.conditions) + '<br><br>' : ''}
       ${co.name || ''}${co.legalForm ? ' — ' + co.legalForm : ''}${co.siret ? ' — SIRET ' + co.siret : ''}${co.rcs ? ' — ' + co.rcs : ''}.
       ${co.insurance ? '<br>Assurance : ' + escapeHtml(co.insurance) + '.' : ''}
-      ${co.iban ? '<br>Coordonnées bancaires : ' + escapeHtml(co.iban) + '.' : ''}
-      <br>Devis établi en deux exemplaires. En cas d'acceptation, retourner un exemplaire daté et signé.
+      ${!isInvoice && co.iban ? '<br>Coordonnées bancaires : ' + escapeHtml(co.iban) + '.' : ''}
+      ${isInvoice
+        ? "<br>Facture acquittée à réception du paiement intégral."
+        : "<br>Devis établi en deux exemplaires. En cas d'acceptation, retourner un exemplaire daté et signé."}
     </div>
   </div>`;
 }

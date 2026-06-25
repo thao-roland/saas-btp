@@ -564,24 +564,81 @@ export function recordClientResponse(tok, status, name) {
 // ============================================================
 // FACTURES (stockées dans entreprises.factures côté cloud)
 // ============================================================
+// Types de facture supportés
+export const INVOICE_KINDS = {
+  full:      { label: 'Facture',                title: 'Facture',                defaultPct: 100 },
+  acompte:   { label: 'Acompte',                title: "Facture d'acompte",      defaultPct: 30 },
+  situation: { label: 'Situation intermédiaire',title: 'Facture de situation',   defaultPct: 40 },
+  solde:     { label: 'Solde',                  title: 'Facture de solde',       defaultPct: 30 },
+};
+
+// Construit le « snapshot » d'une facture partielle (acompte / situation /
+// solde) à partir d'un devis et d'un pourcentage. Le montant est ventilé
+// proportionnellement sur chaque taux de TVA présent dans le devis.
+function buildPartialSnapshot(q, percent, label) {
+  const c = computeQuote(q);
+  const lines = [];
+  const baseSection = { id: uid('sec'), type: 'facturation', label: 'Facturation' };
+  if (q.noTva || !c.tvaLines.length) {
+    lines.push({
+      id: uid('ln'),
+      designation: `${label} (${percent} %) — ${q.title || 'devis ' + q.number}`,
+      detail: `Pourcentage appliqué sur le devis ${q.number}.`,
+      qty: 1, unit: 'forfait',
+      unitPrice: (c.htNet || c.ht) * percent / 100,
+      marginCoef: 1, tva: 0,
+    });
+  } else {
+    for (const t of c.tvaLines) {
+      lines.push({
+        id: uid('ln'),
+        designation: `${label} ${percent} % — assiette TVA ${t.rate.toString().replace('.', ',')} %`,
+        detail: `Sur devis ${q.number}.`,
+        qty: 1, unit: 'forfait',
+        unitPrice: t.base * percent / 100,
+        marginCoef: 1, tva: t.rate,
+      });
+    }
+  }
+  return {
+    id: uid('q'), number: q.number, clientId: q.clientId,
+    status: 'invoiced', createdAt: Date.now(),
+    date: new Date().toISOString().slice(0, 10),
+    validUntil: '',
+    title: `${label} sur ${q.title || 'devis ' + q.number}`,
+    sections: [{ ...baseSection, lines }],
+    globalDiscount: 0, payments: [], execDelay: '', conditions: '',
+    notes: `Cette facture représente ${percent} % du devis ${q.number}.`,
+    noTva: !!q.noTva, shareToken: '', clientResponse: null,
+  };
+}
+
 // Une même devis peut donner lieu à plusieurs factures (utile pour les
 // situations de travaux : acompte, situation intermédiaire, solde).
-export function convertToInvoice(quoteId) {
+export function convertToInvoice(quoteId, opts = {}) {
   const u = currentUser();
   const q = getQuote(quoteId);
   if (!q) return null;
+  const kind = INVOICE_KINDS[opts.kind] ? opts.kind : 'full';
+  const percent = kind === 'full' ? 100 : Math.max(1, Math.min(100, Number(opts.percent) || INVOICE_KINDS[kind].defaultPct));
+  const label = INVOICE_KINDS[kind].label;
+  const snapshot = (kind === 'full' || percent >= 100)
+    ? JSON.parse(JSON.stringify(q))
+    : buildPartialSnapshot(q, percent, label);
   const year = new Date().getFullYear();
   const inv = {
     id: uid('inv'),
     number: `${u.settings.invoicePrefix}-${year}-${String(u.settings.nextInvoiceSeq).padStart(4, '0')}`,
     quoteId: q.id, quoteNumber: q.number, clientId: q.clientId,
     createdAt: Date.now(), date: new Date().toISOString().slice(0, 10),
-    dueDate: new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10),
-    status: 'unpaid', snapshot: JSON.parse(JSON.stringify(q)),
+    dueDate: opts.dueDate || new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10),
+    paymentMethod: opts.paymentMethod || 'Virement bancaire',
+    kind, percent, label,
+    status: 'unpaid', snapshot,
   };
   u.invoices.unshift(inv);
   u.settings.nextInvoiceSeq++;
-  q.status = 'invoiced';
+  if (kind === 'full') q.status = 'invoiced';
   localPersist();
   if (CLOUD) {
     pushEntreprise({ factures: u.invoices, settings: u.settings });

@@ -3,7 +3,7 @@
 // ============================================================
 import { icon } from '../icons.js';
 import { appLayout, bindAppLayout } from '../layout.js';
-import { currentUser, getClient, computeQuote, save, convertToInvoice, QUOTE_STATUS } from '../store.js';
+import { currentUser, getClient, computeQuote, save, convertToInvoice, QUOTE_STATUS, INVOICE_KINDS } from '../store.js';
 import { eur, dateFR, escapeHtml, statusBadge, toast, modal, bindDropdown } from '../ui.js';
 import { renderQuoteDoc } from '../doc.js';
 import { exportPDF } from '../exports.js';
@@ -18,7 +18,18 @@ export function renderInvoices(ctx) {
   const total = (inv) => computeQuote(inv.snapshot).ttc;
 
   function docOpts(inv) {
-    return { kind: 'Facture', number: inv.number, date: inv.date, dueDate: inv.dueDate };
+    const titles = { acompte: "Facture d'acompte", situation: 'Facture de situation', solde: 'Facture de solde' };
+    const opts = {
+      kind: 'Facture',
+      number: inv.number,
+      date: inv.date,
+      dueDate: inv.dueDate,
+      paymentMethod: inv.paymentMethod || 'Virement bancaire',
+    };
+    if (inv.kind && inv.kind !== 'full') {
+      opts.title = (titles[inv.kind] || 'Facture') + (inv.percent ? ' ' + inv.percent + ' %' : '');
+    }
+    return opts;
   }
 
   function openInvoice(inv) {
@@ -30,6 +41,113 @@ export function renderInvoices(ctx) {
              <button class="btn btn-primary" id="inv-pdf">${icon('pdf')} Télécharger en PDF</button>`,
       onMount(el) {
         el.querySelector('#inv-pdf').onclick = () => exportPDF(inv.snapshot, u, client, docOpts(inv));
+      },
+    });
+  }
+
+  // Étape 2 : formulaire de paramètres de la facture (type, %, échéance, paiement)
+  function openInvoiceForm(q) {
+    const c = computeQuote(q);
+    const cli = getClient(q.clientId);
+    const today = new Date();
+    const due30 = new Date(today.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+    let kind = 'full';
+    let percent = 100;
+
+    const previewAmount = () => eur(c.ttc * percent / 100);
+    const optionRow = (k, defaultPct, hint) => `
+      <label class="checkrow" data-kind-row="${k}" style="border:1px solid var(--line);border-radius:var(--radius-md);padding:.75rem .9rem;cursor:pointer;${kind===k?'border-color:var(--accent);background:var(--accent-soft)':''}">
+        <input type="radio" name="inv-kind" value="${k}" ${kind===k?'checked':''} data-default-pct="${defaultPct}">
+        <span style="flex:1">
+          <strong style="font-size:.92rem">${INVOICE_KINDS[k].title}</strong>
+          <div class="dim" style="font-size:.78rem">${hint}</div>
+        </span>
+      </label>`;
+
+    modal({
+      title: 'Détails de la facture', size: 'lg',
+      body: `
+        <div class="card-pad" style="background:var(--surface-2);border-radius:var(--radius-md);margin-bottom:1.1rem">
+          <div class="dim" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Devis source</div>
+          <strong style="font-size:.95rem">${escapeHtml(q.number)} — ${escapeHtml(q.title || 'Sans objet')}</strong>
+          <div class="dim" style="font-size:.82rem">${escapeHtml(cli?.name || '—')} · Total : <strong>${eur(c.ttc)}</strong></div>
+        </div>
+
+        <div class="lbl">Type de facture</div>
+        <div class="stack" style="margin-top:.4rem">
+          ${optionRow('full', 100, 'Facturer la totalité du devis (100 %).')}
+          ${optionRow('acompte', 30, 'Premier versement avant le démarrage.')}
+          ${optionRow('situation', 40, 'Avancement en cours de chantier.')}
+          ${optionRow('solde', 30, 'Solde à la fin des travaux.')}
+        </div>
+
+        <div class="field-row cols-2" style="margin-top:1rem" id="inv-partial-fields">
+          <div class="field" style="margin:0">
+            <label>Pourcentage à facturer</label>
+            <div class="flex items-center gap-sm">
+              <input class="input" id="inv-pct" type="number" min="1" max="100" step="1" value="${percent}">
+              <span class="dim">%</span>
+            </div>
+            <div class="hint">Montant facturé : <strong id="inv-amount">${previewAmount()}</strong></div>
+          </div>
+          <div class="field" style="margin:0"></div>
+        </div>
+
+        <div class="field-row cols-2" style="margin-top:1rem">
+          <div class="field" style="margin:0">
+            <label>Date d'échéance</label>
+            <input class="input" id="inv-due" type="date" value="${due30}">
+          </div>
+          <div class="field" style="margin:0">
+            <label>Mode de paiement</label>
+            <input class="input" id="inv-pay" value="Virement bancaire" placeholder="Virement, chèque…">
+          </div>
+        </div>
+        ${u.company.iban ? '' : `
+          <div class="card-pad" style="margin-top:1rem;background:var(--warn-soft);border-radius:var(--radius-md)">
+            <strong style="font-size:.84rem;color:var(--warn)">${icon('warn')} Aucun IBAN renseigné</strong>
+            <p style="font-size:.8rem;margin-top:.3rem">Renseignez votre IBAN dans <a href="#/app/account" style="color:var(--accent-strong);font-weight:600;text-decoration:underline">Mon entreprise</a> pour qu'il s'affiche sur la facture.</p>
+          </div>`}`,
+      foot: `<button class="btn btn-ghost" data-close>Annuler</button>
+             <button class="btn btn-primary" id="inv-create">${icon('check')} Créer la facture</button>`,
+      onMount(el, close) {
+        const pctInput = el.querySelector('#inv-pct');
+        const amountEl = el.querySelector('#inv-amount');
+        const partial = el.querySelector('#inv-partial-fields');
+
+        const refreshKindUI = () => {
+          el.querySelectorAll('[data-kind-row]').forEach(row => {
+            const on = row.querySelector('input').checked;
+            row.style.borderColor = on ? 'var(--accent)' : 'var(--line)';
+            row.style.background = on ? 'var(--accent-soft)' : 'transparent';
+          });
+          partial.style.opacity = kind === 'full' ? '.5' : '1';
+          pctInput.disabled = kind === 'full';
+        };
+        const refreshAmount = () => { amountEl.textContent = eur(c.ttc * percent / 100); };
+        refreshKindUI();
+
+        el.querySelectorAll('input[name="inv-kind"]').forEach(r => r.onchange = () => {
+          kind = r.value;
+          percent = kind === 'full' ? 100 : Number(r.dataset.defaultPct);
+          pctInput.value = percent;
+          refreshKindUI();
+          refreshAmount();
+        });
+        pctInput.oninput = () => {
+          percent = Math.max(1, Math.min(100, Number(pctInput.value) || 0));
+          refreshAmount();
+        };
+
+        el.querySelector('#inv-create').onclick = () => {
+          const inv = convertToInvoice(q.id, {
+            kind, percent,
+            dueDate: el.querySelector('#inv-due').value,
+            paymentMethod: el.querySelector('#inv-pay').value.trim() || 'Virement bancaire',
+          });
+          close();
+          if (inv) { toast('Facture créée : ' + inv.number); paint(); }
+        };
       },
     });
   }
@@ -81,9 +199,9 @@ export function renderInvoices(ctx) {
             </div>`;
           }).join('') || '<p class="dim">Aucun devis ne correspond.</p>';
           host.querySelectorAll('[data-q]').forEach(it => it.onclick = () => {
-            const inv = convertToInvoice(it.dataset.q);
+            const q = u.quotes.find(x => x.id === it.dataset.q);
             close();
-            if (inv) { toast('Facture créée : ' + inv.number); paint(); }
+            openInvoiceForm(q);
           });
         };
         draw();
@@ -116,8 +234,10 @@ export function renderInvoices(ctx) {
         <tbody>
           ${u.invoices.map(inv => {
             const c = getClient(inv.clientId);
+            const kindLbl = inv.kind && inv.kind !== 'full'
+              ? `<div class="cell-sub">${escapeHtml(INVOICE_KINDS[inv.kind]?.title || inv.kind)} ${inv.percent || ''} %</div>` : '';
             return `<tr data-inv="${inv.id}">
-              <td class="t-strong">${escapeHtml(inv.number)}</td>
+              <td class="t-strong">${escapeHtml(inv.number)}${kindLbl}</td>
               <td>${escapeHtml(inv.quoteNumber)}</td>
               <td>${escapeHtml(c?.name || '—')}</td>
               <td>${statusBadge(inv.status, INV_STATUS)}</td>
