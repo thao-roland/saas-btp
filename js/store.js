@@ -564,11 +564,12 @@ export function recordClientResponse(tok, status, name) {
 // ============================================================
 // FACTURES (stockées dans entreprises.factures côté cloud)
 // ============================================================
+// Une même devis peut donner lieu à plusieurs factures (utile pour les
+// situations de travaux : acompte, situation intermédiaire, solde).
 export function convertToInvoice(quoteId) {
   const u = currentUser();
   const q = getQuote(quoteId);
   if (!q) return null;
-  if (u.invoices.some(i => i.quoteId === quoteId)) return u.invoices.find(i => i.quoteId === quoteId);
   const year = new Date().getFullYear();
   const inv = {
     id: uid('inv'),

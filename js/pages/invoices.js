@@ -34,17 +34,17 @@ export function renderInvoices(ctx) {
     });
   }
 
-  // Modal : choisir un devis à transformer en facture (tous les devis sont listés)
+  // Modal : choisir un devis à transformer en facture (aucun filtre)
   function openNewInvoice() {
     const list = [...u.quotes].sort((a, b) => b.createdAt - a.createdAt);
-    const invByQuote = new Map(u.invoices.map(i => [i.quoteId, i]));
 
     modal({
       title: 'Nouvelle facture', size: 'lg',
       body: `
         <p class="muted" style="font-size:.9rem;margin-bottom:1rem">
           Sélectionnez le devis à transformer en facture. Tous les postes, la TVA
-          et l'éventuelle remise sont repris automatiquement.</p>
+          et l'éventuelle remise sont repris automatiquement. Vous pouvez créer
+          plusieurs factures à partir d'un même devis (acompte, situations…).</p>
         ${list.length ? `
           <div class="search" style="margin-bottom:1rem">${icon('search')}
             <input id="conv-search" placeholder="Numéro, objet, client..."></div>
@@ -69,7 +69,6 @@ export function renderInvoices(ctx) {
           });
           host.innerHTML = items.map(q => {
             const c = getClient(q.clientId);
-            const existing = invByQuote.get(q.id);
             return `
             <div class="lib-item" data-q="${q.id}">
               <span class="li-cat">${icon('doc')}</span>
@@ -77,23 +76,14 @@ export function renderInvoices(ctx) {
                 <div class="li-name">${escapeHtml(q.number)} — ${escapeHtml(q.title || 'Sans objet')}</div>
                 <div class="li-sub">${escapeHtml(c?.name || 'Client non renseigné')} · ${dateFR(q.createdAt)}</div>
               </div>
-              ${existing
-                ? `<span class="badge gray no-dot">Déjà facturé · ${escapeHtml(existing.number)}</span>`
-                : statusBadge(q.status, QUOTE_STATUS)}
+              ${statusBadge(q.status, QUOTE_STATUS)}
               <span class="li-price">${eur(computeQuote(q).ttc)}</span>
             </div>`;
           }).join('') || '<p class="dim">Aucun devis ne correspond.</p>';
           host.querySelectorAll('[data-q]').forEach(it => it.onclick = () => {
-            const qid = it.dataset.q;
-            const existing = invByQuote.get(qid);
+            const inv = convertToInvoice(it.dataset.q);
             close();
-            if (existing) {
-              toast('Ce devis a déjà été facturé : ' + existing.number, 'info');
-              openInvoice(existing);
-            } else {
-              const inv = convertToInvoice(qid);
-              if (inv) { toast('Facture créée : ' + inv.number); paint(); }
-            }
+            if (inv) { toast('Facture créée : ' + inv.number); paint(); }
           });
         };
         draw();
